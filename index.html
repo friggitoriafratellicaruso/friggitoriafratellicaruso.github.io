@@ -818,7 +818,7 @@ function InstantWin({addetto}){
         <Stat icon="🏆" label="Vincitori" value={tokens.filter(t=>t.won).length} color={C.green}/>
         <Stat icon="⏳" label="Non giocati" value={tokens.filter(t=>t.status==="Non giocato").length} color={C.muted}/>
       </div>
-      {tokens.slice(0,50).map(t=><div key={t.id} style={{background:C.card,borderRadius:10,padding:14,marginBottom:8,border:`1px solid ${t.won&&!t.riscosso?C.gold+"44":C.border+"22`}}`}}>
+      {tokens.slice(0,50).map(t=><div key={t.id} style={{background:C.card,borderRadius:10,padding:14,marginBottom:8,border:`1px solid ${t.won&&!t.riscosso?C.gold+"44":C.border+"22"}`}}>
         <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:t.won&&!t.riscosso?8:0}}>
           <div style={{fontFamily:"monospace",fontSize:11,color:C.muted,flex:1,minWidth:120,wordBreak:"break-all"}}>{t.token}</div>
           <div style={{color:C.text,fontSize:12,minWidth:80}}>{t.customer_name||"—"}</div>
