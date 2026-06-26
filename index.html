@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="mobile-web-app-capable" content="yes">
+<title>CrunchClub — Gestionale</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{background:#0D1117;color:#E6EDF3;font-family:'Inter',system-ui,sans-serif;overflow-x:hidden}
+  input,select,textarea{font-family:inherit;outline:none}
+  button{font-family:inherit;transition:opacity .15s}
+  ::-webkit-scrollbar{width:4px;height:4px}
+  ::-webkit-scrollbar-track{background:#161B22}
+  ::-webkit-scrollbar-thumb{background:#30363D;border-radius:2px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  .fade{animation:fadeIn .2s ease}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+
+// ── SUPABASE ──────────────────────────────────────────────────────────────
+const SUPA_URL = "https://wxhysgthyebydoupsjrh.supabase.co";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4aHlzZ3RoeWVieWRvdXBzanJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0NjEwNTcsImV4cCI6MjA5ODAzNzA1N30.93IVIg62GM8oPYvuvQ9xcvbwYPpbM0XzOPWM4RdIsic";
+const sb = supabase.createClient(SUPA_URL, SUPA_KEY);
+
+// ── PALETTE ───────────────────────────────────────────────────────────────
+const C={bg:"#0D1117",primary:"#161B22",surface:"#1C2128",card:"#21262D",border:"#30363D",accent:"#E94560",gold:"#F0A500",teal:"#2DD4BF",green:"#3FB950",purple:"#A371F7",blue:"#58A6FF",orange:"#FFA657",text:"#E6EDF3",muted:"#8B949E",dim:"#484F58"};
+
+// ── HELPERS ───────────────────────────────────────────────────────────────
+const fmt=n=>n?.toLocaleString("it-IT")||"0";
+const fmtE=n=>"€ "+(n||0).toFixed(2).replace(".",",");
+const uid=()=>Math.random().toString(36).slice(2,9).toUpperCase();
+const today=()=>new Date().toISOString().slice(0,10);
+const calcTier=p=>p>=3000?"Platinum":p>=1500?"Gold":p>=500?"Silver":"Bronze";
+const tierColor=t=>({Platinum:"#E5E4E2",Gold:C.gold,Silver:"#C0C0C0",Bronze:"#CD7F32"}[t]||C.muted);
+const segColor=s=>({VIP:C.purple,Regolare:C.teal,Nuovo:C.green,"A rischio":C.accent,Dormiente:C.muted}[s]||C.muted);
+const stColor=s=>({Attiva:C.green,Esaurita:C.muted,Vinto:C.green,"Non vinto":C.accent,"Non giocato":C.muted}[s]||C.muted);
+const genTK=()=>"TK-"+uid()+uid();
+const genAcqID=()=>"ACQ-"+uid()+uid();
+
+// ── QR CODE SVG (data URL) ────────────────────────────────────────────────
+// Genera URL con parametri e lo incapsula in un QR visivo semplice
+// In produzione usa una lib vera; questo è un placeholder visivo con URL embedded
+function buildAcquistoURL(id){
+  return `https://friggitoriafratellicaruso.github.io/cliente.html?acq=${id}`;
+}
+
+function QRSvg({value,size=180}){
+  const s=25;
+  const m=Array.from({length:s},()=>Array(s).fill(0));
+  const fp=(r,c)=>{for(let i=0;i<7;i++)for(let j=0;j<7;j++){if(i===0||i===6||j===0||j===6||(i>=2&&i<=4&&j>=2&&j<=4))m[r+i][c+j]=1;}};
+  fp(0,0);fp(0,18);fp(18,0);
+  for(let i=8;i<17;i++){m[6][i]=i%2===0?1:0;m[i][6]=i%2===0?1:0;}
+  let h=0;for(let i=0;i<value.length;i++)h=((h<<5)-h+value.charCodeAt(i))|0;
+  for(let r=0;r<s;r++)for(let c=0;c<s;c++){if(m[r][c]===0)m[r][c]=((h^(r*19+c*11))&1);}
+  const cell=size/s;
+  return <div style={{background:"#fff",padding:10,borderRadius:12,display:"inline-block"}}>
+    <div style={{display:"grid",gridTemplateColumns:`repeat(${s},${cell}px)`}}>
+      {m.flat().map((v,i)=><div key={i} style={{width:cell,height:cell,background:v?"#000":"#fff"}}/>)}
+    </div>
+  </div>;
+}
+
+function assignOutcome(campaign){
+  const r=Math.random()*100;let cumul=0;
+  for(const p of campaign.prizes){cumul+=p.probability;if(r<cumul&&p.remaining>0)return{won:true,prizeId:p.id,prizeName:p.name};}
+  return{won:false,prizeId:null,prizeName:null};
+}
+
+// ── SEED DATA (inserita una sola volta se db è vuoto) ─────────────────────
+const SEED_CUSTOMERS=[
+  {name:"Marco Rossi",email:"marco@email.it",phone:"333-1234567",birthday:"1985-03-15",segment:"VIP",tier:"Gold",points:1240,spent:3200,visits:48,last_visit:"2024-12-20",join_date:"2022-03-10",referrals:3,cashback:45.20,tags:["fedele"],notes:""},
+  {name:"Giulia Bianchi",email:"giulia@email.it",phone:"347-2345678",birthday:"1992-07-22",segment:"Regolare",tier:"Silver",points:580,spent:1100,visits:22,last_visit:"2024-12-18",join_date:"2023-01-15",referrals:1,cashback:18.00,tags:["regolare"],notes:""},
+  {name:"Luca Ferrari",email:"luca@email.it",phone:"366-3456789",birthday:"1978-11-05",segment:"VIP",tier:"Platinum",points:2100,spent:5800,visits:95,last_visit:"2024-12-21",join_date:"2021-06-01",referrals:7,cashback:112.50,tags:["vip","fedele"],notes:""},
+  {name:"Sofia Conti",email:"sofia@email.it",phone:"380-4567890",birthday:"1999-01-30",segment:"Nuovo",tier:"Bronze",points:120,spent:240,visits:4,last_visit:"2024-12-10",join_date:"2024-11-20",referrals:0,cashback:3.00,tags:["nuovo"],notes:""},
+  {name:"Davide Romano",email:"davide@email.it",phone:"333-7890123",birthday:"1975-12-25",segment:"VIP",tier:"Platinum",points:3400,spent:8200,visits:142,last_visit:"2024-12-21",join_date:"2020-01-08",referrals:12,cashback:195.00,tags:["vip","fedele"],notes:""},
+];
+const SEED_MENU=[
+  {category:"Antipasti",name:"Bruschetta al pomodoro",descrizione:"Pane, pomodori, basilico",price:5.50,available:true,img:"🍞",allergens:["glutine"]},
+  {category:"Antipasti",name:"Tagliere misto",descrizione:"Salumi e formaggi locali",price:14.00,available:true,img:"🧀",allergens:["latte"]},
+  {category:"Primi",name:"Pasta al pesto",descrizione:"Trofie, pesto genovese DOP",price:9.00,available:true,img:"🍝",allergens:["glutine"]},
+  {category:"Primi",name:"Risotto ai funghi",descrizione:"Funghi porcini, parmigiano",price:12.00,available:true,img:"🍚",allergens:["latte"]},
+  {category:"Secondi",name:"Pollo alla cacciatora",descrizione:"Olive, capperi, pomodorini",price:13.50,available:true,img:"🍗",allergens:[]},
+  {category:"Dolci",name:"Panna cotta",descrizione:"Coulis frutti di bosco",price:4.50,available:true,img:"🍮",allergens:["latte"]},
+  {category:"Bevande",name:"Coca Cola 33cl",descrizione:"",price:3.00,available:true,img:"🥤",allergens:[]},
+  {category:"Bevande",name:"Vino rosso (calice)",descrizione:"Selezione del giorno",price:5.00,available:true,img:"🍷",allergens:["solfiti"]},
+];
+const SEED_CAMP=[
+  {id:"CAMP-001",name:"Natale 2024",active:true,start_date:"2024-12-01",end_date:"2024-12-31",trigger_type:"importo",trigger_value:20,
+   prizes:[{id:"p1",name:"Caffè gratis",probability:10,total:100,remaining:87,value:"~€1,50"},{id:"p2",name:"Sconto 10%",probability:8,total:80,remaining:71,value:"variabile"},{id:"p3",name:"Gift Card €20",probability:2,total:20,remaining:18,value:"€20,00"}],
+   stats:{generated:0,played:0,won:0}},
+];
+
+// ── BLUETOOTH PRINTER ─────────────────────────────────────────────────────
+const BTP={
+  device:null,char:null,
+  UUIDS:["000018f0-0000-1000-8000-00805f9b34fb","e7810a71-73ae-499d-8c15-faa9aef0c3f2","49535343-fe7d-4ae5-8fa9-9fafd205e455","0000ff00-0000-1000-8000-00805f9b34fb"],
+  async connect(){
+    if(!navigator.bluetooth)throw new Error("Usa Chrome su Android con HTTPS.");
+    const dev=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:this.UUIDS});
+    const srv=await dev.gatt.connect();
+    let svc=null;for(const u of this.UUIDS){try{svc=await srv.getPrimaryService(u);break}catch{}}
+    if(!svc)throw new Error("Stampante non riconosciuta.");
+    const chars=await svc.getCharacteristics();
+    this.char=chars.find(c=>c.properties.write||c.properties.writeWithoutResponse);
+    if(!this.char)throw new Error("Caratteristica scrittura non trovata.");
+    this.device=dev;return dev.name||"Connessa";
+  },
+  disconnect(){if(this.device?.gatt?.connected)this.device.gatt.disconnect();this.device=null;this.char=null;},
+  isConnected(){return!!(this.device?.gatt?.connected&&this.char);},
+  async write(data){
+    if(!this.char)throw new Error("Non connessa.");
+    const CHUNK=512;
+    for(let i=0;i<data.length;i+=CHUNK){
+      const c=data.slice(i,i+CHUNK);
+      if(this.char.properties.writeWithoutResponse)await this.char.writeValueWithoutResponse(c);
+      else await this.char.writeValue(c);
+      await new Promise(r=>setTimeout(r,20));
+    }
+  },
+  buildReceipt(d){
+    const enc=new TextEncoder();const b=[];
+    const push=(...a)=>a.forEach(x=>b.push(x));
+    const text=s=>enc.encode(s).forEach(x=>b.push(x));
+    const ESC=0x1B,GS=0x1D,LF=0x0A;
+    push(ESC,0x40);push(ESC,0x61,0x01);
+    push(ESC,0x21,0x30);text("CRUNCHCLUB\n");push(ESC,0x21,0x00);
+    text("========================\n");
+    push(ESC,0x21,0x08);text(d.campaignName+"\n");push(ESC,0x21,0x00);
+    text("Data: "+d.date+"\n");text("Valido 30 giorni\n");
+    text("------------------------\n");
+    push(ESC,0x61,0x00);push(ESC,0x21,0x08);text("Cliente:\n");push(ESC,0x21,0x00);
+    text(d.customerName+"\n\n");
+    push(ESC,0x61,0x01);push(ESC,0x21,0x08);text("TOKEN:\n");push(ESC,0x21,0x00);
+    push(ESC,0x21,0x30);text(d.token+"\n");push(ESC,0x21,0x00);
+    text("------------------------\n");
+    const qd=enc.encode(d.playUrl);const ql=qd.length+3;
+    push(ESC,0x61,0x01);
+    push(GS,0x28,0x6B,0x04,0x00,0x31,0x41,0x32,0x00);
+    push(GS,0x28,0x6B,0x03,0x00,0x31,0x43,0x06);
+    push(GS,0x28,0x6B,0x03,0x00,0x31,0x45,0x30);
+    push(GS,0x28,0x6B,ql&0xFF,(ql>>8)&0xFF,0x31,0x50,0x30,...qd);
+    push(GS,0x28,0x6B,0x03,0x00,0x31,0x51,0x30);
+    push(LF);text("app.miolocale.it/gioca\n");
+    text("========================\n");
+    push(ESC,0x61,0x01);text("Buona fortuna!\n\n\n");
+    push(GS,0x56,0x41,0x03);
+    return new Uint8Array(b);
+  }
+};
+
+// ── QR DISPLAY ────────────────────────────────────────────────────────────
+function QRDisplay({value,size=110}){
+  const s=21;
+  const m=Array.from({length:s},()=>Array(s).fill(0));
+  const fp=(r,c)=>{for(let i=0;i<7;i++)for(let j=0;j<7;j++){if(i===0||i===6||j===0||j===6||(i>=2&&i<=4&&j>=2&&j<=4))m[r+i][c+j]=1;}};
+  fp(0,0);fp(0,14);fp(14,0);
+  for(let i=8;i<13;i++){m[6][i]=i%2===0?1:0;m[i][6]=i%2===0?1:0;}
+  let h=0;for(let i=0;i<value.length;i++)h=((h<<5)-h+value.charCodeAt(i))|0;
+  for(let r=0;r<s;r++)for(let c=0;c<s;c++){if(m[r][c]===0)m[r][c]=((h^(r*17+c*13))&1);}
+  const cell=size/s;
+  return <div style={{background:"#fff",padding:8,borderRadius:8,display:"inline-block"}}>
+    <div style={{display:"grid",gridTemplateColumns:`repeat(${s},${cell}px)`}}>
+      {m.flat().map((v,i)=><div key={i} style={{width:cell,height:cell,background:v?"#000":"#fff"}}/>)}
+    </div>
+  </div>;
+}
+
+// ── SHARED UI ─────────────────────────────────────────────────────────────
+const {useState,useEffect,useCallback,useRef}=React;
+
+function Spinner(){return <div style={{width:20,height:20,border:`2px solid ${C.border}`,borderTopColor:C.accent,borderRadius:"50%",animation:"spin .7s linear infinite",display:"inline-block"}}/>;}
+function Badge({text,color,sm}){return <span style={{background:(color||C.muted)+"22",color:color||C.muted,border:`1px solid ${(color||C.muted)}44`,borderRadius:20,padding:sm?"2px 8px":"3px 11px",fontSize:sm?10:12,fontWeight:600,whiteSpace:"nowrap"}}>{text}</span>;}
+function Stat({icon,label,value,sub,color}){return <div style={{background:C.card,borderRadius:12,padding:"14px 16px",borderLeft:`3px solid ${color||C.accent}`,flex:"1 1 120px",minWidth:120}}>
+  <div style={{fontSize:20}}>{icon}</div>
+  <div style={{fontSize:21,fontWeight:800,color:color||C.accent,marginTop:4,lineHeight:1}}>{value}</div>
+  <div style={{color:C.muted,fontSize:12,marginTop:3}}>{label}</div>
+  {sub&&<div style={{color:C.teal,fontSize:11,marginTop:2}}>{sub}</div>}
+</div>;}
+function Modal({title,onClose,children,wide}){return <div style={{position:"fixed",inset:0,background:"#000c",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",padding:12}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+  <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,padding:22,width:wide?"min(860px,96vw)":"min(540px,96vw)",maxHeight:"90vh",overflowY:"auto"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+      <h3 style={{margin:0,color:C.text,fontSize:16}}>{title}</h3>
+      <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,fontSize:20,cursor:"pointer",padding:"4px 8px"}}>✕</button>
+    </div>
+    {children}
+  </div>
+</div>;}
+function Inp({label,value,onChange,type="text",placeholder,opts,req}){
+  const s={width:"100%",background:C.primary,color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",fontSize:13,boxSizing:"border-box"};
+  return <div style={{marginBottom:13}}>
+    {label&&<label style={{color:C.muted,fontSize:11,display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:.5}}>{label}{req&&<span style={{color:C.accent}}> *</span>}</label>}
+    {opts?<select value={value} onChange={e=>onChange(e.target.value)} style={s}>{opts.map(o=><option key={o} value={o}>{o}</option>)}</select>
+        :<input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={s}/>}
+  </div>;
+}
+function Btn({children,onClick,color,outline,sm,disabled,full}){return <button onClick={onClick} disabled={disabled} style={{background:outline?"transparent":(color||C.accent),color:outline?(color||C.accent):"#fff",border:`1px solid ${color||C.accent}`,borderRadius:8,padding:sm?"6px 14px":"9px 20px",cursor:disabled?"not-allowed":"pointer",fontWeight:600,fontSize:sm?12:13,opacity:disabled?.5:1,width:full?"100%":"auto"}}>{children}</button>;}
+function Tabs({tabs,active,onChange}){return <div style={{display:"flex",gap:4,marginBottom:16,background:C.primary,borderRadius:10,padding:4,overflowX:"auto"}}>
+  {tabs.map(t=><button key={t} onClick={()=>onChange(t)} style={{flex:"0 0 auto",background:active===t?C.card:"none",color:active===t?C.text:C.muted,border:"none",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:active===t?700:400,fontSize:13,whiteSpace:"nowrap"}}>{t}</button>)}
+</div>;}
+function SH({title,sub,action,onAction}){return <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+  <div><h2 style={{margin:0,fontSize:20,color:C.text}}>{title}</h2>{sub&&<p style={{margin:"4px 0 0",color:C.muted,fontSize:13}}>{sub}</p>}</div>
+  {action&&<Btn onClick={onAction}>{action}</Btn>}
+</div>;}
+function Bar({val,max,color}){return <div style={{background:C.border,borderRadius:4,height:6}}>
+  <div style={{width:Math.min(100,(val/Math.max(max,1))*100)+"%",height:"100%",background:color||C.teal,borderRadius:4,transition:"width .3s"}}/>
+</div>;}
+function ErrBox({msg}){return msg?<div style={{background:C.accent+"22",border:`1px solid ${C.accent}44`,borderRadius:8,padding:"10px 14px",color:C.accent,fontSize:13,marginBottom:12}}>{msg}</div>:null;}
+function Loading(){return <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,padding:40,color:C.muted,fontSize:14}}><Spinner/> Caricamento...</div>;}
+
+// ── SUPABASE HOOKS ────────────────────────────────────────────────────────
+function useTable(table,order="id"){
+  const [data,setData]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [err,setErr]=useState("");
+
+  const load=useCallback(async()=>{
+    setLoading(true);setErr("");
+    const {data:rows,error}=await sb.from(table).select("*").order(order,{ascending:true});
+    if(error){setErr(error.message);}else{setData(rows||[]);}
+    setLoading(false);
+  },[table,order]);
+
+  useEffect(()=>{load();},[load]);
+
+  // Realtime subscription
+  useEffect(()=>{
+    const ch=sb.channel("rt_"+table)
+      .on("postgres_changes",{event:"*",schema:"public",table},(payload)=>{
+        if(payload.eventType==="INSERT")setData(prev=>[...prev,payload.new]);
+        if(payload.eventType==="UPDATE")setData(prev=>prev.map(r=>r.id===payload.new.id?payload.new:r));
+        if(payload.eventType==="DELETE")setData(prev=>prev.filter(r=>r.id!==payload.old.id));
+      })
+      .subscribe();
+    return()=>sb.removeChannel(ch);
+  },[table]);
+
+  const insert=async(row)=>{
+    const {data:inserted,error}=await sb.from(table).insert(row).select().single();
+    if(error)throw error;
+    return inserted;
+  };
+  const update=async(id,row)=>{
+    const {data:updated,error}=await sb.from(table).update(row).eq("id",id).select().single();
+    if(error)throw error;
+    return updated;
+  };
+  const remove=async(id)=>{
+    const {error}=await sb.from(table).delete().eq("id",id);
+    if(error)throw error;
+  };
+  const upsert=async(row,conflict="id")=>{
+    const {data:upserted,error}=await sb.from(table).upsert(row,{onConflict:conflict}).select().single();
+    if(error)throw error;
+    return upserted;
+  };
+
+  return{data,setData,loading,err,load,insert,update,remove,upsert};
+}
+
+// ── SEED su primo avvio ───────────────────────────────────────────────────
+async function seedIfEmpty(){
+  const{data:c}=await sb.from("clienti").select("id").limit(1);
+  if(c&&c.length===0){
+    await sb.from("clienti").insert(SEED_CUSTOMERS);
+    await sb.from("menu_items").insert(SEED_MENU);
+    await sb.from("campagne").insert(SEED_CAMP.map(camp=>({
+      ...camp,prizes:JSON.stringify(camp.prizes),stats:JSON.stringify(camp.stats)
+    })));
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ══════════════════════════════════════════════════════════════════════════
+function Dashboard(){
+  const{data:customers,loading:lc}=useTable("clienti","id");
+  const{data:cards}=useTable("gift_cards","id");
+  const{data:camps}=useTable("campagne","id");
+  const{data:tokens}=useTable("tokens","id");
+  const months=["Lug","Ago","Set","Ott","Nov","Dic"];
+  const rev=[4200,5100,3800,6200,5800,7400];
+  const won=tokens.filter(t=>t.won).length;
+  const played=tokens.filter(t=>t.status!=="Non giocato").length;
+  if(lc)return <Loading/>;
+  return <div className="fade">
+    <div style={{marginBottom:20}}>
+      <h1 style={{margin:0,fontSize:24,color:C.text,fontWeight:800}}>Dashboard <span style={{color:C.accent}}>CrunchClub</span></h1>
+      <p style={{color:C.muted,margin:"4px 0 0",fontSize:13}}>{new Date().toLocaleDateString("it-IT",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</p>
+    </div>
+    <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:16}}>
+      <Stat icon="👥" label="Clienti" value={customers.length} color={C.teal}/>
+      <Stat icon="⭐" label="Punti totali" value={fmt(customers.reduce((s,c)=>s+c.points,0))} color={C.gold}/>
+      <Stat icon="💳" label="Gift Card attive" value={cards.filter(g=>g.status==="Attiva").length} color={C.purple}/>
+      <Stat icon="🎰" label="Token IW" value={tokens.length} sub={`${won} vincitori`} color={C.orange}/>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+      <div style={{background:C.card,borderRadius:14,padding:18}}>
+        <div style={{fontWeight:700,color:C.text,marginBottom:12,fontSize:14}}>Fatturato 6 mesi</div>
+        <div style={{display:"flex",alignItems:"flex-end",gap:6,height:80}}>
+          {rev.map((v,i)=><div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+            <span style={{color:C.muted,fontSize:8}}>€{(v/1000).toFixed(1)}k</span>
+            <div style={{width:"100%",height:(v/Math.max(...rev))*65,background:i===5?`linear-gradient(to top,${C.accent},${C.gold})`:C.border+"88",borderRadius:"3px 3px 0 0"}}/>
+            <span style={{color:C.muted,fontSize:9}}>{months[i]}</span>
+          </div>)}
+        </div>
+      </div>
+      <div style={{background:C.card,borderRadius:14,padding:18}}>
+        <div style={{fontWeight:700,color:C.text,marginBottom:12,fontSize:14}}>Tier clienti</div>
+        {[["Platinum","#E5E4E2"],[`Gold`,C.gold],["Silver","#C0C0C0"],["Bronze","#CD7F32"]].map(([t,col])=>{
+          const n=customers.filter(c=>c.tier===t).length;
+          return <div key={t} style={{marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{color:col,fontSize:12,fontWeight:600}}>{t}</span><span style={{color:C.muted,fontSize:12}}>{n}</span></div>
+            <Bar val={n} max={customers.length} color={col}/>
+          </div>;
+        })}
+      </div>
+    </div>
+    <div style={{background:C.card,borderRadius:14,padding:18}}>
+      <div style={{fontWeight:700,color:C.text,marginBottom:12,fontSize:14}}>🎰 Instant Win</div>
+      {camps.filter(c=>c.active).length===0&&<div style={{color:C.muted,fontSize:13}}>Nessuna campagna attiva</div>}
+      {camps.filter(c=>c.active).map(camp=>{
+        const stats=typeof camp.stats==="string"?JSON.parse(camp.stats):camp.stats;
+        return <div key={camp.id}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><span style={{color:C.text,fontWeight:600}}>{camp.name}</span><span style={{color:C.muted,fontSize:12}}>{camp.start_date} → {camp.end_date}</span></div>
+          <div style={{display:"flex",gap:16,marginBottom:8}}>
+            {[["Token",stats.generated,C.blue],["Giocati",stats.played,C.teal],["Vincitori",stats.won,C.green]].map(([l,v,c])=><div key={l} style={{textAlign:"center"}}>
+              <div style={{color:c,fontWeight:800,fontSize:17}}>{v}</div><div style={{color:C.muted,fontSize:10}}>{l}</div>
+            </div>)}
+          </div>
+          <Bar val={stats.played} max={Math.max(stats.generated,1)} color={C.gold}/>
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// CLIENTI
+// ══════════════════════════════════════════════════════════════════════════
+function Clienti({addetto}){
+  const{data:customers,loading,err,insert,update,remove}=useTable("clienti","name");
+  const{data:camps}=useTable("campagne","id");
+  const[search,setSearch]=useState("");
+  const[filterSeg,setFilterSeg]=useState("Tutti");
+  const[sel,setSel]=useState(null);
+  const[showAdd,setShowAdd]=useState(false);
+  const[editMode,setEditMode]=useState(false);
+  const[ptModal,setPtModal]=useState(null);
+  const[tokenModal,setTokenModal]=useState(null);
+  const[genToken_,setGenToken_]=useState(null);
+  const[form,setForm]=useState({name:"",email:"",phone:"",birthday:"",segment:"Nuovo",notes:""});
+  const[ptAmt,setPtAmt]=useState("");
+  const[saving,setSaving]=useState(false);
+  const[formErr,setFormErr]=useState("");
+  const[btStatus,setBtStatus]=useState("disconnected");
+  const[btMsg,setBtMsg]=useState("");
+  const[printDone,setPrintDone]=useState(false);
+  const[acqModal,setAcqModal]=useState(null);
+  const[acqImporto,setAcqImporto]=useState("");
+  const[acqResult,setAcqResult]=useState(null);
+  const[acqSaving,setAcqSaving]=useState(false);
+
+  const activeCamps=camps.filter(c=>c.active);
+  const filtered=customers
+    .filter(c=>filterSeg==="Tutti"||c.segment===filterSeg)
+    .filter(c=>c.name.toLowerCase().includes(search.toLowerCase())||c.email.toLowerCase().includes(search.toLowerCase()));
+
+  const saveCustomer=async()=>{
+    if(!form.name||!form.email){setFormErr("Nome e email obbligatori.");return;}
+    setSaving(true);setFormErr("");
+    try{
+      if(editMode&&sel){
+        await update(sel.id,{...form,tier:calcTier(sel.points)});
+        setSel(null);
+      }else{
+        await insert({...form,tier:"Bronze",points:0,spent:0,visits:0,last_visit:today(),join_date:today(),referrals:0,cashback:0,tags:[],addetto_registrazione:addetto?.nome||""});
+      }
+      setShowAdd(false);setEditMode(false);setForm({name:"",email:"",phone:"",birthday:"",segment:"Nuovo",notes:""});
+    }catch(e){setFormErr(e.message);}
+    setSaving(false);
+  };
+
+  const applyPts=async()=>{
+    const amt=parseInt(ptAmt);if(!amt)return;
+    const c=customers.find(x=>x.id===ptModal);
+    const np=Math.max(0,c.points+amt);
+    await update(ptModal,{points:np,tier:calcTier(np)});
+    setPtModal(null);setPtAmt("");
+  };
+
+  const doGenToken=async(customer,campaign)=>{
+    const tk={id:uid(),token:genTK(),customer_id:customer.id,customer_name:customer.name,campaign_id:campaign.id,campaign_name:campaign.name,created_at:today(),status:"Non giocato",addetto_id:addetto?.id||null,addetto_nome:addetto?.nome||""};
+    const{error}=await sb.from("tokens").insert(tk);
+    if(error){alert("Errore: "+error.message);return;}
+    // update campaign stats
+    const stats=typeof campaign.stats==="string"?JSON.parse(campaign.stats):campaign.stats;
+    await sb.from("campagne").update({stats:JSON.stringify({...stats,generated:stats.generated+1})}).eq("id",campaign.id);
+    setGenToken_(tk);setPrintDone(false);
+  };
+
+
+  const doAcquisto=async()=>{
+    const imp=parseFloat(acqImporto);
+    if(!imp||imp<=0||!acqModal)return;
+    setAcqSaving(true);
+    const punti=Math.floor(imp);
+    const acqId=genAcqID();
+    const acqUrl=buildAcquistoURL(acqId);
+    const campAttiva=activeCamps[0]||null;
+    const hasToken=campAttiva&&imp>=campAttiva.trigger_value;
+    let tokenId=null;
+    if(hasToken){
+      const tk={id:uid(),token:genTK(),customer_id:acqModal.id,customer_name:acqModal.name,campaign_id:campAttiva.id,campaign_name:campAttiva.name,created_at:today(),status:"Non giocato"};
+      await sb.from("tokens").insert(tk);
+      tokenId=tk.id;
+      const stats=typeof campAttiva.stats==="string"?JSON.parse(campAttiva.stats):campAttiva.stats;
+      await sb.from("campagne").update({stats:JSON.stringify({...stats,generated:stats.generated+1})}).eq("id",campAttiva.id);
+    }
+    await sb.from("acquisti").insert({id:acqId,importo:imp,punti,campaign_id:campAttiva?.id||null,token_iw:tokenId,customer_id:null,status:"non_usato",addetto_id:addetto?.id||null,addetto_nome:addetto?.nome||""});
+    setAcqResult({acqId,acqUrl,punti,importo:imp,hasToken,campagna:campAttiva?.name||""});
+    setAcqSaving(false);
+  };
+
+  const connectPrinter=async()=>{
+    setBtStatus("connecting");setBtMsg("");
+    try{const n=await BTP.connect();setBtStatus("connected");setBtMsg("✅ "+n);}
+    catch(e){setBtStatus("error");setBtMsg(e.message);}
+  };
+  const printAcquisto=async(acq)=>{
+    if(!BTP.isConnected()){setBtMsg("Connetti prima.");return;}
+    setBtStatus("printing");
+    try{
+      const enc=new TextEncoder();const b=[];
+      const push=(...a)=>a.forEach(x=>b.push(x));
+      const text=s=>enc.encode(s).forEach(x=>b.push(x));
+      const ESC=0x1B,GS=0x1D,LF=0x0A;
+      push(ESC,0x40);push(ESC,0x61,0x01);
+      push(ESC,0x21,0x30);text("CRUNCHCLUB\n");push(ESC,0x21,0x00);
+      text("========================\n");
+      push(ESC,0x21,0x08);text("Registra il tuo acquisto\n");push(ESC,0x21,0x00);
+      text("Data: "+new Date().toLocaleDateString("it-IT")+"\n");
+      text("------------------------\n");
+      push(ESC,0x61,0x00);
+      text("Importo:  \u20ac "+acq.importo.toFixed(2)+"\n");
+      text("Punti:    +"+acq.punti+" pt\n");
+      if(acq.hasToken)text("Bonus:    1 Gratta e Vinci!\n");
+      text("------------------------\n");
+      push(ESC,0x61,0x01);
+      push(ESC,0x21,0x08);text("Scansiona il QR\n");push(ESC,0x21,0x00);
+      text("con il tuo telefono\n\n");
+      // QR code via ESC/POS
+      const qd=enc.encode(acq.acqUrl);const ql=qd.length+3;
+      push(GS,0x28,0x6B,0x04,0x00,0x31,0x41,0x32,0x00);
+      push(GS,0x28,0x6B,0x03,0x00,0x31,0x43,0x07);
+      push(GS,0x28,0x6B,0x03,0x00,0x31,0x45,0x30);
+      push(GS,0x28,0x6B,ql&0xFF,(ql>>8)&0xFF,0x31,0x50,0x30,...qd);
+      push(GS,0x28,0x6B,0x03,0x00,0x31,0x51,0x30);
+      push(LF);
+      text("========================\n");
+      text("Grazie!\n\n\n");
+      push(GS,0x56,0x41,0x03);
+      await BTP.write(new Uint8Array(b));
+      setBtStatus("connected");setBtMsg("\u2705 Stampato!");setPrintDone(true);
+    }catch(e){setBtStatus("error");setBtMsg("\u274C "+e.message);}
+  };
+
+  const printToken=async(tk)=>{
+    if(!BTP.isConnected()){setBtMsg("Connetti prima.");return;}
+    setBtStatus("printing");
+    try{
+      await BTP.write(BTP.buildReceipt({token:tk.token,campaignName:tk.campaign_name,customerName:tk.customer_name,date:new Date().toLocaleDateString("it-IT"),playUrl:`https://app.miolocale.it/gioca?t=${tk.token}`}));
+      setBtStatus("connected");setBtMsg("✅ Stampato!");setPrintDone(true);
+    }catch(e){setBtStatus("error");setBtMsg("❌ "+e.message);}
+  };
+  const btCol={disconnected:C.muted,connecting:C.gold,connected:C.green,printing:C.blue,error:C.accent}[btStatus];
+
+  if(loading)return <Loading/>;
+  return <div className="fade">
+    <SH title="Clienti" sub={`${customers.length} totali`} action="+ Nuovo" onAction={()=>{setForm({name:"",email:"",phone:"",birthday:"",segment:"Nuovo",notes:""});setEditMode(false);setShowAdd(true);}}/>
+    <ErrBox msg={err}/>
+    <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Nome o email…" style={{flex:"1 1 180px",background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 14px",color:C.text,fontSize:13}}/>
+      {["Tutti","VIP","Regolare","Nuovo","A rischio"].map(s=><button key={s} onClick={()=>setFilterSeg(s)} style={{background:filterSeg===s?segColor(s):C.card,color:filterSeg===s?"#fff":C.muted,border:"none",borderRadius:20,padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:filterSeg===s?700:400}}>{s}</button>)}
+    </div>
+    <div style={{display:"grid",gap:10}}>
+      {filtered.map(c=><div key={c.id} style={{background:C.card,borderRadius:12,padding:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+          <div><div style={{fontWeight:700,color:C.text,fontSize:15}}>{c.name}</div><div style={{color:C.muted,fontSize:12}}>{c.email}</div></div>
+          <Badge text={c.tier} color={tierColor(c.tier)}/>
+        </div>
+        <div style={{display:"flex",gap:12,marginBottom:10}}>
+          <div style={{textAlign:"center"}}><div style={{color:C.gold,fontWeight:800}}>{fmt(c.points)}</div><div style={{color:C.muted,fontSize:10}}>punti</div></div>
+          <div style={{textAlign:"center"}}><div style={{color:C.green,fontWeight:700}}>{fmtE(c.spent)}</div><div style={{color:C.muted,fontSize:10}}>speso</div></div>
+          <div style={{textAlign:"center"}}><div style={{color:C.blue,fontWeight:700}}>{c.visits}</div><div style={{color:C.muted,fontSize:10}}>visite</div></div>
+          <div style={{marginLeft:"auto"}}><Badge text={c.segment} color={segColor(c.segment)}/></div>
+        </div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          <Btn sm color={C.teal} onClick={()=>setSel(c)}>Dettagli</Btn>
+          <Btn sm color={C.gold} outline onClick={()=>setPtModal(c.id)}>+Pt</Btn>
+          <Btn sm color={C.green} onClick={()=>{setAcqModal(c);setAcqImporto("");setAcqResult(null);}}>💳 Acquisto</Btn>
+          {activeCamps.length>0&&<Btn sm color={C.orange} onClick={()=>{setTokenModal({customer:c,campaign:activeCamps[0]});setGenToken_(null);}}>🎰 Token</Btn>}
+        </div>
+      </div>)}
+      {filtered.length===0&&<div style={{background:C.card,borderRadius:12,padding:28,textAlign:"center",color:C.muted}}>Nessun cliente trovato</div>}
+    </div>
+
+    {/* ADD/EDIT */}
+    {showAdd&&<Modal title={editMode?"✏️ Modifica":"👤 Nuovo cliente"} onClose={()=>setShowAdd(false)}>
+      <ErrBox msg={formErr}/>
+      <Inp label="Nome" value={form.name} onChange={v=>setForm({...form,name:v})} req/>
+      <Inp label="Email" value={form.email} onChange={v=>setForm({...form,email:v})} req/>
+      <Inp label="Telefono" value={form.phone} onChange={v=>setForm({...form,phone:v})}/>
+      <Inp label="Compleanno" value={form.birthday} onChange={v=>setForm({...form,birthday:v})} type="date"/>
+      <Inp label="Segmento" value={form.segment} onChange={v=>setForm({...form,segment:v})} opts={["Nuovo","Regolare","VIP","A rischio"]}/>
+      <Inp label="Note" value={form.notes} onChange={v=>setForm({...form,notes:v})}/>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+        <Btn outline color={C.muted} onClick={()=>setShowAdd(false)}>Annulla</Btn>
+        <Btn onClick={saveCustomer} disabled={saving}>{saving?<Spinner/>:(editMode?"Salva":"Crea")}</Btn>
+      </div>
+    </Modal>}
+
+    {/* PUNTI */}
+    {ptModal&&<Modal title="⭐ Punti" onClose={()=>setPtModal(null)}>
+      <Inp label="Punti (negativo per sottrarre)" value={ptAmt} onChange={setPtAmt} type="number"/>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+        <Btn outline color={C.muted} onClick={()=>setPtModal(null)}>Annulla</Btn>
+        <Btn onClick={applyPts} color={C.gold}>Conferma</Btn>
+      </div>
+    </Modal>}
+
+    {/* TOKEN */}
+
+    {/* MODAL ACQUISTO */}
+    {acqModal&&<Modal title="💳 Registra Acquisto" onClose={()=>{setAcqModal(null);setAcqResult(null);setAcqImporto("");}}>
+      {!acqResult?<div>
+        <div style={{background:C.primary,borderRadius:10,padding:14,marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{color:C.muted}}>Cliente</span>
+          <span style={{color:C.gold,fontWeight:700}}>{acqModal.name}</span>
+        </div>
+        <Inp label="Importo scontrino (€)" value={acqImporto} onChange={setAcqImporto} type="number" placeholder="Es. 42.50" req/>
+        {acqImporto&&parseFloat(acqImporto)>0&&<div style={{background:C.primary,borderRadius:10,padding:14,marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+            <span style={{color:C.muted,fontSize:13}}>Punti assegnati</span>
+            <span style={{color:C.gold,fontWeight:700}}>+{Math.floor(parseFloat(acqImporto))} pt</span>
+          </div>
+          {activeCamps[0]&&parseFloat(acqImporto)>=activeCamps[0].trigger_value&&<div style={{display:"flex",justifyContent:"space-between"}}>
+            <span style={{color:C.muted,fontSize:13}}>Gratta e Vinci</span>
+            <span style={{color:C.orange,fontWeight:700}}>🎰 1 token generato</span>
+          </div>}
+          {activeCamps[0]&&parseFloat(acqImporto)<activeCamps[0].trigger_value&&<div style={{color:C.dim,fontSize:12}}>
+            Mancano €{(activeCamps[0].trigger_value-parseFloat(acqImporto)).toFixed(2)} per il Gratta e Vinci
+          </div>}
+        </div>}
+        <div style={{background:C.teal+"11",border:`1px solid ${C.teal}33`,borderRadius:10,padding:12,marginBottom:16,fontSize:12,color:C.muted,lineHeight:1.6}}>
+          💡 Verrà generato un <b style={{color:C.text}}>QR monouso</b>. Il cliente lo scansiona, inserisce la sua email e riceve punti e token automaticamente.
+        </div>
+        <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+          <Btn outline color={C.muted} onClick={()=>{setAcqModal(null);setAcqImporto("");}}>Annulla</Btn>
+          <Btn onClick={doAcquisto} disabled={!acqImporto||parseFloat(acqImporto)<=0||acqSaving} color={C.green}>
+            {acqSaving?<Spinner/>:"Genera QR →"}
+          </Btn>
+        </div>
+      </div>:<div style={{textAlign:"center"}}>
+        <div style={{fontSize:40,marginBottom:8}}>✅</div>
+        <div style={{color:C.text,fontWeight:700,fontSize:16,marginBottom:4}}>QR pronto!</div>
+        <div style={{color:C.muted,fontSize:13,marginBottom:14}}>Mostralo al cliente da scansionare</div>
+
+        {/* QR CODE */}
+        <div style={{background:C.primary,borderRadius:14,padding:20,marginBottom:14}}>
+          <QRSvg value={acqResult.acqUrl} size={200}/>
+          <div style={{marginTop:10,color:C.muted,fontSize:10,wordBreak:"break-all"}}>{acqResult.acqUrl}</div>
+        </div>
+
+        {/* RIEPILOGO */}
+        <div style={{background:C.primary,borderRadius:10,padding:14,marginBottom:14,textAlign:"left"}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+            <span style={{color:C.muted,fontSize:13}}>Importo</span>
+            <span style={{color:C.text,fontWeight:600}}>€ {acqResult.importo.toFixed(2)}</span>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:acqResult.hasToken?6:0}}>
+            <span style={{color:C.muted,fontSize:13}}>Punti</span>
+            <span style={{color:C.gold,fontWeight:700}}>+{acqResult.punti} pt</span>
+          </div>
+          {acqResult.hasToken&&<div style={{display:"flex",justifyContent:"space-between"}}>
+            <span style={{color:C.muted,fontSize:13}}>Gratta e Vinci</span>
+            <span style={{color:C.orange,fontWeight:700}}>🎰 1 token</span>
+          </div>}
+        </div>
+
+        {/* BLUETOOTH PRINT */}
+        <div style={{background:C.primary,borderRadius:12,padding:16,marginBottom:14,textAlign:"left"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <span style={{color:C.text,fontWeight:700}}>🖨️ Stampa bigliettino</span>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:btCol,boxShadow:`0 0 6px ${btCol}`}}/>
+              <span style={{color:btCol,fontSize:12}}>{{disconnected:"Off",connecting:"…",connected:"✓ Connessa",printing:"Stampa…",error:"Errore"}[btStatus]}</span>
+            </div>
+          </div>
+          {btMsg&&<div style={{background:btCol+"22",border:`1px solid ${btCol}33`,borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:12,color:btCol,whiteSpace:"pre-line"}}>{btMsg}</div>}
+          {!navigator.bluetooth&&<div style={{background:C.accent+"22",border:`1px solid ${C.accent}33`,borderRadius:8,padding:"10px 12px",fontSize:12,color:C.accent}}>⚠️ Usa Chrome su Android + HTTPS per la stampa.</div>}
+          {navigator.bluetooth&&<div style={{display:"flex",gap:8}}>
+            {(btStatus==="disconnected"||btStatus==="error")&&<button onClick={connectPrinter} style={{flex:1,background:C.teal,color:"#fff",border:"none",borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:700,fontSize:13}}>🔗 Connetti</button>}
+            {btStatus==="connected"&&<><button onClick={()=>printAcquisto(acqResult)} style={{flex:2,background:`linear-gradient(135deg,${C.gold},${C.orange})`,color:"#000",border:"none",borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:800}}>🖨️ Stampa ora</button><button onClick={()=>{BTP.disconnect();setBtStatus("disconnected");setBtMsg("");}} style={{flex:1,background:"none",border:`1px solid ${C.muted}44`,color:C.muted,borderRadius:8,padding:"10px",cursor:"pointer",fontSize:12}}>✕</button></>}
+            {btStatus==="printing"&&<div style={{flex:1,background:C.blue+"22",borderRadius:8,padding:"10px",textAlign:"center",color:C.blue,fontSize:13}}>⏳</div>}
+          </div>}
+          {printDone&&<div style={{marginTop:8,background:C.green+"22",border:`1px solid ${C.green}33`,borderRadius:8,padding:"8px 12px",fontSize:12,color:C.green}}>✅ Bigliettino stampato!</div>}
+        </div>
+
+        {acqResult.hasToken&&<div style={{background:C.orange+"11",border:`1px solid ${C.orange}33`,borderRadius:10,padding:12,marginBottom:14,fontSize:13,color:C.orange,textAlign:"left"}}>
+          🎰 Il cliente troverà il Gratta e Vinci nella sezione "Gioca" dell'app dopo la scansione.
+        </div>}
+        <div style={{background:C.accent+"11",border:`1px solid ${C.accent}33`,borderRadius:10,padding:10,marginBottom:14,fontSize:12,color:C.muted,textAlign:"left"}}>
+          ⚠️ QR <b style={{color:C.text}}>monouso</b> — bruciato dopo la prima scansione.
+        </div>
+        <Btn full onClick={()=>{setAcqModal(null);setAcqResult(null);setAcqImporto("");setPrintDone(false);}}>Chiudi</Btn>
+      </div>}
+    </Modal>}
+
+    {tokenModal&&<Modal title="🎰 Genera Token" onClose={()=>{setTokenModal(null);setGenToken_(null);setPrintDone(false);}}>
+      {!genToken_?<div>
+        <div style={{background:C.primary,borderRadius:10,padding:14,marginBottom:14}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><span style={{color:C.muted}}>Cliente</span><span style={{color:C.gold,fontWeight:700}}>{tokenModal.customer.name}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:C.muted}}>Campagna</span><span style={{color:C.teal,fontWeight:700}}>{tokenModal.campaign.name}</span></div>
+        </div>
+        <div style={{background:C.accent+"11",border:`1px solid ${C.accent}33`,borderRadius:10,padding:12,marginBottom:14,fontSize:12,color:C.muted,lineHeight:1.6}}>
+          ℹ️ Token anonimo — l'esito viene deciso <b style={{color:C.text}}>solo al momento della giocata</b>.
+        </div>
+        <Btn full onClick={()=>doGenToken(tokenModal.customer,tokenModal.campaign)} color={C.gold}>🎰 Genera Token</Btn>
+      </div>:<div style={{textAlign:"center"}}>
+        <div style={{fontSize:40,marginBottom:8}}>✅</div>
+        <div style={{color:C.text,fontWeight:700,fontSize:16,marginBottom:4}}>Token generato!</div>
+        <div style={{background:C.primary,borderRadius:12,padding:16,marginBottom:14}}>
+          <div style={{fontFamily:"monospace",fontSize:17,fontWeight:800,color:C.gold,letterSpacing:2,wordBreak:"break-all"}}>{genToken_.token}</div>
+          <div style={{color:C.muted,fontSize:11,marginTop:6}}>{genToken_.campaign_name} · {today()}</div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <div style={{color:C.muted,fontSize:11,textTransform:"uppercase",marginBottom:8}}>QR Code</div>
+          <QRDisplay value={`https://app.miolocale.it/gioca?t=${genToken_.token}`} size={110}/>
+        </div>
+        {/* BLUETOOTH */}
+        <div style={{background:C.primary,borderRadius:12,padding:16,marginBottom:12,textAlign:"left"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <span style={{color:C.text,fontWeight:700}}>🖨️ Stampa</span>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:btCol,boxShadow:`0 0 6px ${btCol}`}}/>
+              <span style={{color:btCol,fontSize:12}}>{{disconnected:"Off",connecting:"…",connected:"✓ Connessa",printing:"Stampa…",error:"Errore"}[btStatus]}</span>
+            </div>
+          </div>
+          {btMsg&&<div style={{background:btCol+"22",border:`1px solid ${btCol}33`,borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:12,color:btCol,whiteSpace:"pre-line"}}>{btMsg}</div>}
+          {!navigator.bluetooth&&<div style={{background:C.accent+"22",border:`1px solid ${C.accent}33`,borderRadius:8,padding:"10px 12px",fontSize:12,color:C.accent}}>⚠️ Usa Chrome su Android + HTTPS per la stampa.</div>}
+          {navigator.bluetooth&&<div style={{display:"flex",gap:8}}>
+            {(btStatus==="disconnected"||btStatus==="error")&&<button onClick={connectPrinter} style={{flex:1,background:C.teal,color:"#fff",border:"none",borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:700,fontSize:13}}>🔗 Connetti</button>}
+            {btStatus==="connected"&&<><button onClick={()=>printToken(genToken_)} style={{flex:2,background:`linear-gradient(135deg,${C.gold},${C.orange})`,color:"#000",border:"none",borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:800}}>🖨️ Stampa ora</button><button onClick={()=>{BTP.disconnect();setBtStatus("disconnected");setBtMsg("");}} style={{flex:1,background:"none",border:`1px solid ${C.muted}44`,color:C.muted,borderRadius:8,padding:"10px",cursor:"pointer",fontSize:12}}>✕</button></>}
+            {btStatus==="printing"&&<div style={{flex:1,background:C.blue+"22",borderRadius:8,padding:"10px",textAlign:"center",color:C.blue,fontSize:13}}>⏳</div>}
+          </div>}
+          {printDone&&<div style={{marginTop:8,background:C.green+"22",border:`1px solid ${C.green}33`,borderRadius:8,padding:"8px 12px",fontSize:12,color:C.green}}>✅ Bigliettino stampato!</div>}
+        </div>
+        <Btn full onClick={()=>{setTokenModal(null);setGenToken_(null);setPrintDone(false);}}>Chiudi</Btn>
+      </div>}
+    </Modal>}
+
+    {/* DETTAGLIO */}
+    {sel&&<Modal title={`👤 ${sel.name}`} onClose={()=>setSel(null)}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+        {[["Email",sel.email],["Telefono",sel.phone],["Compleanno",sel.birthday],["Iscritto",sel.join_date]].map(([k,v])=><div key={k} style={{background:C.primary,borderRadius:8,padding:12}}>
+          <div style={{color:C.muted,fontSize:10,textTransform:"uppercase",marginBottom:3}}>{k}</div>
+          <div style={{color:C.text,fontSize:13,fontWeight:600}}>{v||"—"}</div>
+        </div>)}
+      </div>
+      <div style={{display:"flex",gap:10,marginBottom:14}}>
+        {[["⭐",fmt(sel.points),"pt",C.gold],["💰",fmtE(sel.spent),"",C.green],["🛍️",sel.visits,"vis",C.blue],["👥",sel.referrals,"ref",C.purple]].map(([ic,v,l,c])=><div key={l} style={{flex:1,background:C.primary,borderRadius:10,padding:12,textAlign:"center"}}>
+          <div style={{fontSize:16}}>{ic}</div><div style={{color:c,fontSize:16,fontWeight:800,marginTop:3}}>{v}</div><div style={{color:C.muted,fontSize:10}}>{l}</div>
+        </div>)}
+      </div>
+      {sel.notes&&<div style={{background:C.primary,borderRadius:8,padding:12,marginBottom:14,color:C.muted,fontSize:13}}>📝 {sel.notes}</div>}
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <Btn sm color={C.gold} onClick={()=>setPtModal(sel.id)}>⭐ Punti</Btn>
+        <Btn sm color={C.teal} onClick={()=>{setForm({name:sel.name,email:sel.email,phone:sel.phone,birthday:sel.birthday,segment:sel.segment,notes:sel.notes||""});setEditMode(true);setShowAdd(true);}}>✏️ Modifica</Btn>
+        <Btn sm color={C.green} onClick={()=>{setSel(null);setAcqModal(sel);setAcqImporto("");setAcqResult(null);}}>💳 Acquisto</Btn>
+        {activeCamps.length>0&&<Btn sm color={C.orange} onClick={()=>{setSel(null);setTokenModal({customer:sel,campaign:activeCamps[0]});setGenToken_(null);}}>🎰 Token</Btn>}
+        <Btn sm color={C.accent} outline onClick={async()=>{if(!confirm("Eliminare?"))return;await remove(sel.id);setSel(null);}}>🗑️</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// INSTANT WIN
+// ══════════════════════════════════════════════════════════════════════════
+function InstantWin({addetto}){
+  const{data:camps,loading,err,load}=useTable("campagne","id");
+  const{data:tokens}=useTable("tokens","id");
+  const[tab,setTab]=useState("Campagne");
+  const[showNew,setShowNew]=useState(false);
+  const[playToken,setPlayToken]=useState("");
+  const[playResult,setPlayResult]=useState(null);
+  const[scratchPct,setScratchPct]=useState(0);
+  const[scratched,setScratched]=useState(false);
+  const[cf,setCf]=useState({name:"",start_date:"",end_date:"",trigger_type:"importo",trigger_value:20,prizes:[{id:"p1",name:"Caffè gratis",probability:10,total:100,value:"~€1,50"},{id:"p2",name:"Sconto 10%",probability:8,total:80,value:"variabile"}]});
+  const[saving,setSaving]=useState(false);
+
+  const createCamp=async()=>{
+    if(!cf.name)return;
+    setSaving(true);
+    const nc={id:"CAMP-"+uid(),name:cf.name,active:true,start_date:cf.start_date,end_date:cf.end_date,trigger_type:cf.trigger_type,trigger_value:cf.trigger_value,
+      prizes:JSON.stringify(cf.prizes.map(p=>({...p,remaining:p.total}))),
+      stats:JSON.stringify({generated:0,played:0,won:0})};
+    const{error}=await sb.from("campagne").insert(nc);
+    if(error)alert(error.message);
+    else{setShowNew(false);load();}
+    setSaving(false);
+  };
+
+  const toggleCamp=async(camp)=>{
+    await sb.from("campagne").update({active:!camp.active}).eq("id",camp.id);
+    load();
+  };
+
+  const playOp=async()=>{
+    const tk=playToken.trim();
+    const{data:found}=await sb.from("tokens").select("*").eq("token",tk).single();
+    if(!found){setPlayResult({error:"Token non trovato."});return;}
+    if(found.status!=="Non giocato"){setPlayResult({error:"Token già utilizzato."});return;}
+    const{data:camp}=await sb.from("campagne").select("*").eq("id",found.campaign_id).single();
+    if(!camp||!camp.active){setPlayResult({error:"Campagna non attiva."});return;}
+    const prizes=typeof camp.prizes==="string"?JSON.parse(camp.prizes):camp.prizes;
+    const stats=typeof camp.stats==="string"?JSON.parse(camp.stats):camp.stats;
+    const outcome=assignOutcome({prizes});
+    // update token
+    await sb.from("tokens").update({status:outcome.won?"Vinto":"Non vinto",won:outcome.won,prize_name:outcome.prizeName,played_at:today()}).eq("token",tk);
+    // update campaign prizes + stats
+    let updPrizes=prizes;
+    if(outcome.won)updPrizes=prizes.map(p=>p.id===outcome.prizeId?{...p,remaining:Math.max(0,p.remaining-1)}:p);
+    await sb.from("campagne").update({prizes:JSON.stringify(updPrizes),stats:JSON.stringify({...stats,played:stats.played+1,won:stats.won+(outcome.won?1:0)})}).eq("id",camp.id);
+    setPlayResult({...outcome,customerName:found.customer_name});
+    setScratchPct(0);setScratched(false);load();
+  };
+
+  const doScratch=()=>{
+    if(scratched)return;let p=scratchPct;
+    const iv=setInterval(()=>{p=Math.min(100,p+10);setScratchPct(p);if(p>=100){clearInterval(iv);setScratched(true);}},25);
+  };
+
+  if(loading)return <Loading/>;
+  return <div className="fade">
+    <SH title="Instant Win" sub="Token anonimi — esito in tempo reale"/>
+    <ErrBox msg={err}/>
+    <Tabs tabs={["Campagne","Simula","Storico"]} active={tab} onChange={setTab}/>
+
+    {tab==="Campagne"&&<div>
+      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}><Btn onClick={()=>setShowNew(true)}>+ Nuova campagna</Btn></div>
+      {camps.map(camp=>{
+        const stats=typeof camp.stats==="string"?JSON.parse(camp.stats):camp.stats;
+        const prizes=typeof camp.prizes==="string"?JSON.parse(camp.prizes):camp.prizes;
+        return <div key={camp.id} style={{background:C.card,borderRadius:14,padding:18,marginBottom:14,border:`1px solid ${camp.active?C.gold+"44":C.border}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+            <div>
+              <div style={{fontWeight:800,fontSize:16,color:C.text}}>{camp.name}</div>
+              <div style={{color:C.muted,fontSize:12,marginTop:2}}>{camp.start_date} → {camp.end_date} · €{camp.trigger_value} min.</div>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <Badge text={camp.active?"Attiva":"Inattiva"} color={camp.active?C.green:C.muted}/>
+              <Btn sm color={camp.active?C.accent:C.green} outline onClick={()=>toggleCamp(camp)}>{camp.active?"Sospendi":"Riattiva"}</Btn>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:16,marginBottom:10}}>
+            {[["Token",stats.generated,C.blue],["Giocati",stats.played,C.teal],["Vincitori",stats.won,C.green]].map(([l,v,c])=><div key={l} style={{textAlign:"center"}}>
+              <div style={{color:c,fontWeight:800,fontSize:17}}>{v}</div><div style={{color:C.muted,fontSize:10}}>{l}</div>
+            </div>)}
+          </div>
+          <Bar val={stats.played} max={Math.max(stats.generated,1)} color={C.gold}/>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}>
+            {prizes.map(p=><div key={p.id} style={{background:C.primary,borderRadius:8,padding:"5px 10px"}}>
+              <span style={{color:C.text,fontSize:12}}>{p.name}</span>
+              <span style={{color:C.gold,fontSize:11,marginLeft:8}}>{p.probability}% · {p.remaining}/{p.total}</span>
+            </div>)}
+          </div>
+        </div>;
+      })}
+      {camps.length===0&&<div style={{background:C.card,borderRadius:12,padding:28,textAlign:"center",color:C.muted}}>Nessuna campagna. Creane una!</div>}
+    </div>}
+
+    {tab==="Simula"&&<div style={{maxWidth:420,margin:"0 auto",textAlign:"center"}}>
+      <div style={{background:C.card,borderRadius:14,padding:20,marginBottom:14}}>
+        <div style={{color:C.muted,fontSize:12,textTransform:"uppercase",marginBottom:8}}>Token</div>
+        <input value={playToken} onChange={e=>{setPlayToken(e.target.value.toUpperCase());setPlayResult(null);setScratchPct(0);setScratched(false);}} placeholder="TK-XXXXXXXXXXXXXXXX" style={{width:"100%",background:C.primary,color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"11px 14px",fontSize:14,fontFamily:"monospace",textAlign:"center",letterSpacing:1,boxSizing:"border-box"}}/>
+        {playResult?.error&&<div style={{color:C.accent,fontSize:12,marginTop:8}}>{playResult.error}</div>}
+        {!playResult&&<Btn full onClick={playOp} color={C.gold} disabled={!playToken.trim()}><span style={{display:"block",marginTop:10}}>🎰 Gioca</span></Btn>}
+        {!playResult&&tokens.some(t=>t.status==="Non giocato")&&<button onClick={()=>setPlayToken(tokens.find(t=>t.status==="Non giocato")?.token||"")} style={{marginTop:8,background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:12}}>Usa token demo</button>}
+      </div>
+      {playResult&&!playResult.error&&<div>
+        <div style={{color:C.muted,fontSize:13,marginBottom:14}}>Cliente: <b style={{color:C.text}}>{playResult.customerName}</b></div>
+        <div style={{position:"relative",width:240,height:150,margin:"0 auto 18px",cursor:"pointer"}} onClick={doScratch}>
+          <div style={{position:"absolute",inset:0,borderRadius:18,background:playResult.won?"linear-gradient(135deg,#0d2010,#0a1f0d)":"linear-gradient(135deg,#1f0d0d,#2e0d0d)",border:`2px solid ${playResult.won?C.green:C.accent}44`,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:8}}>
+            {playResult.won?<><div style={{fontSize:36}}>🏆</div><div style={{color:C.green,fontWeight:900,fontSize:18}}>VINTO!</div><div style={{color:C.text,fontSize:13}}>{playResult.prizeName}</div></>:<><div style={{fontSize:36}}>😔</div><div style={{color:C.accent,fontWeight:700,fontSize:16}}>Non vinto</div></>}
+          </div>
+          {!scratched&&<div style={{position:"absolute",inset:0,borderRadius:18,background:`repeating-linear-gradient(45deg,${C.gold}CC,${C.gold}CC 12px,${C.gold}99 12px,${C.gold}99 24px)`,clipPath:`inset(0 ${scratchPct}% 0 0 round 18px)`,border:`2px solid ${C.gold}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            {scratchPct===0&&<div style={{color:"#000",fontWeight:800,fontSize:13}}>👆 Gratta!</div>}
+          </div>}
+        </div>
+        {scratched&&<button onClick={()=>{setPlayToken("");setPlayResult(null);setScratchPct(0);setScratched(false);}} style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 16px",cursor:"pointer",fontSize:13}}>Nuovo test</button>}
+      </div>}
+    </div>}
+
+    {tab==="Storico"&&<div>
+      <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:14}}>
+        <Stat icon="🎫" label="Totali" value={tokens.length} color={C.blue}/>
+        <Stat icon="✅" label="Giocati" value={tokens.filter(t=>t.status!=="Non giocato").length} color={C.teal}/>
+        <Stat icon="🏆" label="Vincitori" value={tokens.filter(t=>t.won).length} color={C.green}/>
+        <Stat icon="⏳" label="Non giocati" value={tokens.filter(t=>t.status==="Non giocato").length} color={C.muted}/>
+      </div>
+      {tokens.slice(0,30).map(t=><div key={t.id} style={{background:C.card,borderRadius:10,padding:14,marginBottom:8,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{fontFamily:"monospace",fontSize:11,color:C.muted,flex:1,minWidth:120,wordBreak:"break-all"}}>{t.token}</div>
+        <div style={{color:C.text,fontSize:12,minWidth:80}}>{t.customer_name}</div>
+        <Badge text={t.status} color={stColor(t.status)}/>
+        {t.prize_name&&<span style={{color:C.gold,fontSize:12}}>{t.prize_name}</span>}
+      </div>)}
+      {tokens.length===0&&<div style={{background:C.card,borderRadius:12,padding:28,textAlign:"center",color:C.muted}}>Nessun token ancora.</div>}
+    </div>}
+
+    {showNew&&<Modal title="🎰 Nuova campagna" onClose={()=>setShowNew(false)} wide>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 16px"}}>
+        <Inp label="Nome" value={cf.name} onChange={v=>setCf({...cf,name:v})} req/>
+        <div/>
+        <Inp label="Data inizio" value={cf.start_date} onChange={v=>setCf({...cf,start_date:v})} type="date"/>
+        <Inp label="Data fine" value={cf.end_date} onChange={v=>setCf({...cf,end_date:v})} type="date"/>
+        <Inp label="Regola" value={cf.trigger_type} onChange={v=>setCf({...cf,trigger_type:v})} opts={["importo","visite","manuale"]}/>
+        <Inp label="Valore minimo (€)" value={cf.trigger_value} onChange={v=>setCf({...cf,trigger_value:parseFloat(v)||0})} type="number"/>
+      </div>
+      <div style={{background:C.primary,borderRadius:10,padding:16,marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <span style={{color:C.text,fontWeight:700}}>Premi</span>
+          <Btn sm color={C.teal} onClick={()=>setCf(f=>({...f,prizes:[...f.prizes,{id:"p"+uid(),name:"",probability:5,total:50,value:""}]}))}>+ Premio</Btn>
+        </div>
+        {cf.prizes.map(p=><div key={p.id} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr auto",gap:8,marginBottom:8,alignItems:"end"}}>
+          <div><label style={{color:C.muted,fontSize:10,textTransform:"uppercase"}}>Nome</label><input value={p.name} onChange={e=>setCf(f=>({...f,prizes:f.prizes.map(x=>x.id===p.id?{...x,name:e.target.value}:x)}))} style={{width:"100%",background:C.card,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"7px 10px",fontSize:12,boxSizing:"border-box"}}/></div>
+          <div><label style={{color:C.muted,fontSize:10,textTransform:"uppercase"}}>%</label><input type="number" value={p.probability} onChange={e=>setCf(f=>({...f,prizes:f.prizes.map(x=>x.id===p.id?{...x,probability:parseFloat(e.target.value)||0}:x)}))} style={{width:"100%",background:C.card,color:C.gold,border:`1px solid ${C.border}`,borderRadius:6,padding:"7px 10px",fontSize:12,fontWeight:700,boxSizing:"border-box"}}/></div>
+          <div><label style={{color:C.muted,fontSize:10,textTransform:"uppercase"}}>Tot.</label><input type="number" value={p.total} onChange={e=>setCf(f=>({...f,prizes:f.prizes.map(x=>x.id===p.id?{...x,total:parseInt(e.target.value)||0}:x)}))} style={{width:"100%",background:C.card,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"7px 10px",fontSize:12,boxSizing:"border-box"}}/></div>
+          <button onClick={()=>setCf(f=>({...f,prizes:f.prizes.filter(x=>x.id!==p.id)}))} style={{background:"none",border:`1px solid ${C.accent}44`,color:C.accent,borderRadius:6,padding:"7px 10px",cursor:"pointer"}}>✕</button>
+        </div>)}
+        <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0 0",borderTop:`1px solid ${C.border}`,color:C.muted,fontSize:12}}>
+          <span>Tot. probabilità vincita</span>
+          <span style={{color:cf.prizes.reduce((s,p)=>s+p.probability,0)>100?C.accent:C.gold,fontWeight:700}}>{cf.prizes.reduce((s,p)=>s+p.probability,0)}%</span>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+        <Btn outline color={C.muted} onClick={()=>setShowNew(false)}>Annulla</Btn>
+        <Btn onClick={createCamp} disabled={saving}>{saving?<Spinner/>:"Crea campagna"}</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// GIFT CARD
+// ══════════════════════════════════════════════════════════════════════════
+function GiftCards(){
+  const{data:cards,loading,err,load}=useTable("gift_cards","id");
+  const{data:customers}=useTable("clienti","name");
+  const[showAdd,setShowAdd]=useState(false);
+  const[useCard,setUseCard]=useState(null);
+  const[form,setForm]=useState({type:"Gift Card",value:50,ownerId:"",expiry:""});
+  const[useAmt,setUseAmt]=useState("");
+  const[saving,setSaving]=useState(false);
+
+  const create=async()=>{
+    setSaving(true);
+    const owner=customers.find(c=>c.id===parseInt(form.ownerId));
+    const{error}=await sb.from("gift_cards").insert({id:"GC-"+uid(),type:form.type,code:form.type.slice(0,2).toUpperCase()+"-"+uid()+"-"+uid(),value:parseFloat(form.value),remaining:parseFloat(form.value),owner_id:owner?.id||null,owner:owner?.name||"—",status:"Attiva",created:today(),expiry:form.expiry,usages:[]});
+    if(error)alert(error.message);
+    else{setShowAdd(false);load();}
+    setSaving(false);
+  };
+
+  const apply=async()=>{
+    const amt=parseFloat(useAmt);
+    const nr=useCard.type==="Conta Ingressi"?useCard.remaining-1:Math.max(0,useCard.remaining-amt);
+    const usages=[...(useCard.usages||[]),{date:today(),amount:useCard.type==="Conta Ingressi"?1:amt}];
+    await sb.from("gift_cards").update({remaining:nr,status:nr<=0?"Esaurita":"Attiva",usages}).eq("id",useCard.id);
+    setUseCard(null);setUseAmt("");load();
+  };
+
+  if(loading)return <Loading/>;
+  return <div className="fade">
+    <SH title="Gift Card" action="+ Emetti" onAction={()=>setShowAdd(true)}/>
+    <ErrBox msg={err}/>
+    <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
+      {[["Gift Card","🎁",C.purple],["Prepagata","💳",C.teal],["Conta Ingressi","🎫",C.gold]].map(([t,ic,c])=>{
+        const cc=cards.filter(x=>x.type===t&&x.status==="Attiva");
+        return <div key={t} style={{flex:"1 1 130px",background:C.card,borderRadius:14,padding:16,borderTop:`3px solid ${c}`}}>
+          <div style={{fontSize:24}}>{ic}</div>
+          <div style={{fontWeight:700,color:C.text,marginTop:8,fontSize:14}}>{t}</div>
+          <div style={{color:c,fontSize:18,fontWeight:800,marginTop:4}}>{cc.length} attive</div>
+          <div style={{color:C.muted,fontSize:11}}>{t==="Conta Ingressi"?`${cc.reduce((s,x)=>s+x.remaining,0)} ing.`:fmtE(cc.reduce((s,x)=>s+x.remaining,0))}</div>
+        </div>;
+      })}
+    </div>
+    <div style={{display:"grid",gap:10}}>
+      {cards.map(c=><div key={c.id} style={{background:C.card,borderRadius:12,padding:16,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{flex:1,minWidth:120}}>
+          <Badge text={c.type} color={c.type==="Gift Card"?C.purple:c.type==="Prepagata"?C.teal:C.gold}/>
+          <div style={{fontFamily:"monospace",fontSize:11,color:C.muted,marginTop:4}}>{c.code}</div>
+          <div style={{color:C.text,fontSize:12,marginTop:2}}>{c.owner}</div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{color:C.gold,fontWeight:800,fontSize:16}}>{c.type==="Conta Ingressi"?`${c.remaining} ing.`:fmtE(c.remaining)}</div>
+          <Badge text={c.status} color={stColor(c.status)}/>
+        </div>
+        {c.status==="Attiva"&&<Btn sm color={C.teal} onClick={()=>setUseCard(c)}>Usa</Btn>}
+      </div>)}
+      {cards.length===0&&<div style={{background:C.card,borderRadius:12,padding:28,textAlign:"center",color:C.muted}}>Nessuna carta emessa.</div>}
+    </div>
+    {showAdd&&<Modal title="💳 Emetti carta" onClose={()=>setShowAdd(false)}>
+      <Inp label="Tipo" value={form.type} onChange={v=>setForm({...form,type:v})} opts={["Gift Card","Prepagata","Conta Ingressi"]}/>
+      <Inp label={form.type==="Conta Ingressi"?"Ingressi":"Valore (€)"} value={form.value} onChange={v=>setForm({...form,value:v})} type="number"/>
+      <Inp label="Scadenza" value={form.expiry} onChange={v=>setForm({...form,expiry:v})} type="date"/>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+        <Btn outline color={C.muted} onClick={()=>setShowAdd(false)}>Annulla</Btn>
+        <Btn onClick={create} disabled={saving}>{saving?<Spinner/>:"Genera"}</Btn>
+      </div>
+    </Modal>}
+    {useCard&&<Modal title={`💳 ${useCard.code}`} onClose={()=>setUseCard(null)}>
+      <div style={{background:C.primary,borderRadius:10,padding:14,marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:C.text}}>{useCard.type}</span><span style={{color:C.gold,fontWeight:700,fontSize:18}}>{useCard.type==="Conta Ingressi"?`${useCard.remaining} ing.`:fmtE(useCard.remaining)}</span></div>
+        <div style={{color:C.muted,fontSize:13,marginTop:4}}>Titolare: {useCard.owner}</div>
+      </div>
+      {useCard.type!=="Conta Ingressi"&&<Inp label="Importo (€)" value={useAmt} onChange={setUseAmt} type="number"/>}
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+        <Btn outline color={C.muted} onClick={()=>setUseCard(null)}>Annulla</Btn>
+        <Btn color={C.teal} onClick={apply}>{useCard.type==="Conta Ingressi"?"Segna ingresso":"Scala importo"}</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// MENU
+// ══════════════════════════════════════════════════════════════════════════
+function MenuDigitale(){
+  const{data:items,loading,err,load}=useTable("menu_items","category");
+  const[showAdd,setShowAdd]=useState(false);
+  const[editItem,setEditItem]=useState(null);
+  const[form,setForm]=useState({category:"Antipasti",name:"",descrizione:"",price:"",available:true,img:"🍽️"});
+  const[saving,setSaving]=useState(false);
+  const cats=[...new Set(items.map(i=>i.category))];
+
+  const toggle=async(item)=>{
+    await sb.from("menu_items").update({available:!item.available}).eq("id",item.id);
+    load();
+  };
+  const save=async()=>{
+    if(!form.name||!form.price)return;
+    setSaving(true);
+    if(editItem)await sb.from("menu_items").update({...form,price:parseFloat(form.price)}).eq("id",editItem.id);
+    else await sb.from("menu_items").insert({...form,price:parseFloat(form.price),allergens:[]});
+    setShowAdd(false);setEditItem(null);load();setSaving(false);
+  };
+
+  if(loading)return <Loading/>;
+  return <div className="fade">
+    <SH title="Menù Digitale" action="+ Voce" onAction={()=>{setEditItem(null);setForm({category:cats[0]||"Antipasti",name:"",descrizione:"",price:"",available:true,img:"🍽️"});setShowAdd(true);}}/>
+    <ErrBox msg={err}/>
+    <div style={{background:C.card,borderRadius:10,padding:"10px 14px",marginBottom:16,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+      <span style={{color:C.teal}}>🔗</span>
+      <span style={{color:C.muted,fontSize:13}}>menu.miolocale.it/QR-ABC123</span>
+      <Btn sm color={C.teal} outline>📋 Copia</Btn>
+    </div>
+    {cats.map(cat=><div key={cat} style={{marginBottom:18}}>
+      <div style={{paddingLeft:12,borderLeft:`3px solid ${C.accent}`,marginBottom:10}}>
+        <span style={{fontWeight:700,color:C.accent,fontSize:12,textTransform:"uppercase"}}>{cat}</span>
+      </div>
+      <div style={{background:C.card,borderRadius:12,overflow:"hidden"}}>
+        {items.filter(i=>i.category===cat).map((item,idx,arr)=><div key={item.id} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderBottom:idx<arr.length-1?`1px solid ${C.border}22`:"none",opacity:item.available?1:.5}}>
+          <span style={{fontSize:20}}>{item.img}</span>
+          <div style={{flex:1}}>
+            <div style={{color:C.text,fontWeight:600,fontSize:14}}>{item.name}</div>
+            {item.descrizione&&<div style={{color:C.muted,fontSize:11}}>{item.descrizione}</div>}
+          </div>
+          <div style={{color:C.gold,fontWeight:800,fontSize:14}}>{fmtE(item.price)}</div>
+          <div onClick={()=>toggle(item)} style={{width:34,height:20,background:item.available?C.green:C.dim,borderRadius:10,cursor:"pointer",position:"relative",flexShrink:0}}>
+            <div style={{position:"absolute",top:2,left:item.available?16:2,width:16,height:16,background:"#fff",borderRadius:8,transition:"left .15s"}}/>
+          </div>
+          <Btn sm outline color={C.muted} onClick={()=>{setEditItem(item);setForm({category:item.category,name:item.name,descrizione:item.descrizione||"",price:item.price.toString(),available:item.available,img:item.img});setShowAdd(true);}}>✏️</Btn>
+        </div>)}
+      </div>
+    </div>)}
+    {showAdd&&<Modal title={editItem?"✏️ Modifica":"➕ Nuova voce"} onClose={()=>{setShowAdd(false);setEditItem(null);}}>
+      <Inp label="Nome" value={form.name} onChange={v=>setForm({...form,name:v})} req/>
+      <Inp label="Prezzo (€)" value={form.price} onChange={v=>setForm({...form,price:v})} type="number" req/>
+      <Inp label="Categoria" value={form.category} onChange={v=>setForm({...form,category:v})} opts={cats.length?cats:["Antipasti"]}/>
+      <Inp label="Icona" value={form.img} onChange={v=>setForm({...form,img:v})}/>
+      <Inp label="Descrizione" value={form.descrizione} onChange={v=>setForm({...form,descrizione:v})}/>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+        <Btn outline color={C.muted} onClick={()=>setShowAdd(false)}>Annulla</Btn>
+        <Btn onClick={save} disabled={saving}>{saving?<Spinner/>:(editItem?"Salva":"Aggiungi")}</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// NOTIFICHE
+// ══════════════════════════════════════════════════════════════════════════
+function Notifiche(){
+  const{data:notifications,load}=useTable("notifiche","created_at");
+  const[msg,setMsg]=useState("");
+  const[target,setTarget]=useState("Tutti");
+  const[loading,setLoading]=useState(false);
+
+  const aiSuggest=async()=>{
+    setLoading(true);
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:200,messages:[{role:"user",content:`Scrivi notifica push max 110 caratteri per CrunchClub, segmento: ${target}. Emoji, urgenza. Solo il testo.`}]})});
+      const d=await res.json();setMsg(d.content[0]?.text||"");
+    }catch{}
+    setLoading(false);
+  };
+
+  const send=async()=>{
+    if(!msg.trim())return;
+    await sb.from("notifiche").insert({text:msg,target,date:today(),opens:0,clicks:0});
+    setMsg("");load();
+  };
+
+  const tpls=["🌟 Oggi doppi punti su ogni acquisto!","🎰 Nuovo Instant Win! Gioca subito.","🎂 Buon compleanno! Il tuo regalo è in app.","🔥 Solo questo weekend: -20% per te!"];
+
+  return <div className="fade">
+    <SH title="Notifiche Push"/>
+    <div style={{background:C.card,borderRadius:14,padding:18,marginBottom:14}}>
+      <div style={{color:C.muted,fontSize:11,textTransform:"uppercase",marginBottom:10}}>Destinatari</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
+        {["Tutti","VIP","Gold","Silver","Regolare","Nuovo"].map(t=><button key={t} onClick={()=>setTarget(t)} style={{background:target===t?C.accent:C.primary,color:target===t?"#fff":C.muted,border:"none",borderRadius:20,padding:"5px 13px",cursor:"pointer",fontSize:12}}>{t}</button>)}
+      </div>
+      <textarea value={msg} onChange={e=>setMsg(e.target.value)} placeholder="Testo notifica…" rows={3} style={{width:"100%",background:C.primary,color:C.text,border:`1px solid ${C.border}`,borderRadius:10,padding:12,fontSize:14,resize:"vertical",boxSizing:"border-box",marginBottom:12}}/>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+        <button onClick={aiSuggest} disabled={loading} style={{background:C.purple,color:"#fff",border:"none",borderRadius:8,padding:"9px 16px",cursor:"pointer",fontWeight:600,fontSize:13,opacity:loading?.6:1}}>{loading?"⏳…":"✨ AI"}</button>
+        <Btn onClick={send} disabled={!msg.trim()}>📤 Invia</Btn>
+      </div>
+    </div>
+    <div style={{background:C.card,borderRadius:14,padding:18,marginBottom:14}}>
+      <div style={{color:C.muted,fontSize:11,textTransform:"uppercase",marginBottom:10}}>Template rapidi</div>
+      {tpls.map((t,i)=><div key={i} onClick={()=>setMsg(t)} style={{background:C.primary,borderRadius:8,padding:"9px 12px",marginBottom:8,cursor:"pointer",border:`1px solid ${msg===t?C.accent+"66":C.border+"33"}`,fontSize:13,color:C.text}}>{t}</div>)}
+    </div>
+    {notifications.length>0&&<div>
+      <div style={{color:C.muted,fontSize:12,textTransform:"uppercase",marginBottom:10}}>Storico</div>
+      {[...notifications].reverse().map(n=><div key={n.id} style={{background:C.card,borderRadius:12,padding:14,marginBottom:10}}>
+        <div style={{color:C.text,fontSize:13,marginBottom:6}}>{n.text}</div>
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          <Badge text={`→ ${n.target}`} color={C.teal} sm/>
+          <span style={{color:C.muted,fontSize:11}}>{n.date}</span>
+        </div>
+      </div>)}
+    </div>}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// SEGMENTI
+// ══════════════════════════════════════════════════════════════════════════
+function Segmentazione(){
+  const{data:customers,loading}=useTable("clienti","id");
+  const segs=[
+    {name:"VIP",icon:"👑",color:C.purple,f:c=>c.segment==="VIP"},
+    {name:"Regolare",icon:"⭐",color:C.teal,f:c=>c.segment==="Regolare"},
+    {name:"Nuovo",icon:"🌱",color:C.green,f:c=>c.segment==="Nuovo"},
+    {name:"A rischio",icon:"⚠️",color:C.orange,f:c=>c.segment==="A rischio"},
+  ];
+  if(loading)return <Loading/>;
+  return <div className="fade">
+    <SH title="Segmentazione"/>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:18}}>
+      {segs.map(s=>{const n=customers.filter(s.f).length;return<div key={s.name} style={{background:C.card,borderRadius:14,padding:18,border:`1px solid ${s.color}33`}}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontSize:24}}>{s.icon}</span><span style={{color:s.color,fontSize:22,fontWeight:800}}>{n}</span></div>
+        <div style={{fontWeight:700,color:C.text,marginBottom:6}}>{s.name}</div>
+        <Bar val={n} max={Math.max(customers.length,1)} color={s.color}/>
+        <div style={{color:C.muted,fontSize:11,marginTop:4,textAlign:"right"}}>{customers.length?Math.round(n/customers.length*100):0}%</div>
+      </div>;})}
+    </div>
+    <div style={{background:C.card,borderRadius:14,padding:18}}>
+      <div style={{fontWeight:700,color:C.text,marginBottom:12}}>📊 KPI</div>
+      {[
+        ["LTV medio",fmtE(customers.length?customers.reduce((s,c)=>s+Number(c.spent),0)/customers.length:0),C.gold],
+        ["Punti medi",fmt(customers.length?Math.round(customers.reduce((s,c)=>s+c.points,0)/customers.length):0),C.teal],
+        ["Cashback totale",fmtE(customers.reduce((s,c)=>s+Number(c.cashback),0)),C.green],
+        ["Referral totali",customers.reduce((s,c)=>s+c.referrals,0),C.purple],
+      ].map(([k,v,c])=><div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.border}22`}}>
+        <span style={{color:C.muted,fontSize:13}}>{k}</span><span style={{color:c,fontWeight:700}}>{v}</span>
+      </div>)}
+    </div>
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// MAIN APP
+// ══════════════════════════════════════════════════════════════════════════
+const NAV=[
+  {id:"dashboard",label:"Dashboard",icon:"📊"},
+  {id:"clienti",label:"Clienti",icon:"👥"},
+  {id:"instantwin",label:"Instant Win",icon:"🎰"},
+  {id:"giftcard",label:"Gift Card",icon:"💳"},
+  {id:"menu",label:"Menù",icon:"🍽️"},
+  {id:"notifiche",label:"Notifiche",icon:"🔔"},
+  {id:"segmenti",label:"Segmenti",icon:"🏷️"},
+];
+
+// ── LOGIN ADDETTO ─────────────────────────────────────────────────────────
+function LoginAddetto({onLogin}){
+  const[nome,setNome]=useState("");
+  const[pin,setPin]=useState("");
+  const[err,setErr]=useState("");
+  const[loading,setLoading]=useState(false);
+
+  const login=async()=>{
+    if(!nome.trim()||!pin.trim()){setErr("Inserisci nome e PIN.");return;}
+    if(!/^\d+$/.test(pin)){setErr("Il PIN deve contenere solo numeri.");return;}
+    setLoading(true);setErr("");
+    const{data,error}=await sb.from("addetti").select("*").eq("pin",pin).eq("attivo",true).single();
+    if(error||!data){setErr("PIN non valido.");setLoading(false);return;}
+    if(!data.nome.toLowerCase().includes(nome.trim().toLowerCase())&&!nome.trim().toLowerCase().includes(data.nome.toLowerCase().split(" ")[0].toLowerCase())){
+      setErr("Nome o PIN non corrispondono.");setLoading(false);return;
+    }
+    onLogin(data);setLoading(false);
+  };
+
+  return <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+    <div style={{width:"100%",maxWidth:360,textAlign:"center"}}>
+      <div style={{width:72,height:72,margin:"0 auto 20px",background:`linear-gradient(135deg,${C.accent},${C.gold})`,borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:34}}>🏆</div>
+      <h1 style={{color:C.text,fontSize:22,fontWeight:900,margin:"0 0 4px"}}>CrunchClub</h1>
+      <p style={{color:C.muted,fontSize:13,marginBottom:32}}>Gestionale — accesso riservato</p>
+      {err&&<div style={{background:C.accent+"22",border:`1px solid ${C.accent}44`,borderRadius:10,padding:"10px 14px",color:C.accent,fontSize:13,marginBottom:16,textAlign:"left"}}>{err}</div>}
+      <div style={{marginBottom:14,textAlign:"left"}}>
+        <label style={{color:C.muted,fontSize:11,display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:.5}}>Il tuo nome</label>
+        <input value={nome} onChange={e=>setNome(e.target.value)} placeholder="Es. Mario" style={{width:"100%",background:C.card,color:C.text,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 16px",fontSize:15,boxSizing:"border-box"}}/>
+      </div>
+      <div style={{marginBottom:20,textAlign:"left"}}>
+        <label style={{color:C.muted,fontSize:11,display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:.5}}>PIN numerico</label>
+        <input type="password" inputMode="numeric" pattern="[0-9]*" value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,""))} onKeyDown={e=>e.key==="Enter"&&login()} placeholder="••••" maxLength={8} style={{width:"100%",background:C.card,color:C.text,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 16px",fontSize:20,letterSpacing:6,textAlign:"center",boxSizing:"border-box"}}/>
+      </div>
+      <button onClick={login} disabled={loading} style={{width:"100%",background:`linear-gradient(135deg,${C.accent},${C.gold})`,border:"none",color:"#fff",borderRadius:14,padding:"15px",fontSize:16,fontWeight:800,cursor:"pointer",opacity:loading?.7:1}}>
+        {loading?<Spinner/>:"Accedi →"}
+      </button>
+    </div>
+  </div>;
+}
+
+function App(){
+  const[section,setSection]=useState("dashboard");
+  const[menuOpen,setMenuOpen]=useState(false);
+  const[seeded,setSeeded]=useState(false);
+  const[connErr,setConnErr]=useState("");
+  const[addetto,setAddetto]=useState(()=>{
+    try{const s=sessionStorage.getItem("flp_addetto");return s?JSON.parse(s):null;}catch{return null;}
+  });
+
+  useEffect(()=>{
+    seedIfEmpty()
+      .then(()=>setSeeded(true))
+      .catch(e=>setConnErr("Errore connessione Supabase: "+e.message));
+  },[]);
+
+  const loginAddetto=(a)=>{setAddetto(a);sessionStorage.setItem("flp_addetto",JSON.stringify(a));};
+  const logoutAddetto=()=>{setAddetto(null);sessionStorage.removeItem("flp_addetto");};
+
+  const current=NAV.find(n=>n.id===section);
+
+  const render=()=>{
+    switch(section){
+      case "dashboard": return <Dashboard/>;
+      case "clienti":   return <Clienti addetto={addetto}/>;
+      case "instantwin":return <InstantWin addetto={addetto}/>;
+      case "giftcard":  return <GiftCards/>;
+      case "menu":      return <MenuDigitale/>;
+      case "notifiche": return <Notifiche/>;
+      case "segmenti":  return <Segmentazione/>;
+      default:          return <Dashboard/>;
+    }
+  };
+
+  if(!seeded&&!connErr)return <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
+    <Spinner/>
+    <div style={{color:C.muted,fontSize:14}}>Connessione a Supabase…</div>
+  </div>;
+
+  if(connErr)return <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+    <div style={{background:C.card,borderRadius:16,padding:28,maxWidth:400,textAlign:"center"}}>
+      <div style={{fontSize:40,marginBottom:12}}>⚠️</div>
+      <div style={{color:C.accent,fontWeight:700,marginBottom:8}}>Errore di connessione</div>
+      <div style={{color:C.muted,fontSize:13,lineHeight:1.6}}>{connErr}</div>
+      <button onClick={()=>window.location.reload()} style={{marginTop:16,background:C.accent,color:"#fff",border:"none",borderRadius:10,padding:"10px 24px",cursor:"pointer",fontWeight:700}}>Riprova</button>
+    </div>
+  </div>;
+
+  // Login addetto obbligatorio
+  if(!addetto)return <LoginAddetto onLogin={loginAddetto}/>;
+
+  return <div style={{minHeight:"100vh",background:C.bg}}>
+    {/* Top bar */}
+    <div style={{background:C.primary,borderBottom:`1px solid ${C.border}`,padding:"12px 16px",display:"flex",alignItems:"center",gap:12,position:"sticky",top:0,zIndex:50}}>
+      <button onClick={()=>setMenuOpen(!menuOpen)} style={{background:"none",border:"none",color:C.text,fontSize:22,cursor:"pointer",padding:4,lineHeight:1}}>☰</button>
+      <div style={{width:30,height:30,background:`linear-gradient(135deg,${C.accent},${C.gold})`,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>🏆</div>
+      <div style={{flex:1}}>
+        <div style={{fontWeight:800,fontSize:14,color:C.text}}>CrunchClub</div>
+        <div style={{fontSize:11,color:C.muted}}>{current?.icon} {current?.label}</div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:5}}>
+          <div style={{width:7,height:7,borderRadius:"50%",background:C.green,boxShadow:`0 0 5px ${C.green}`}}/>
+          <span style={{color:C.muted,fontSize:10}}>live</span>
+        </div>
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:20,padding:"3px 10px",display:"flex",alignItems:"center",gap:6}}>
+          <span style={{fontSize:11}}>👤</span>
+          <span style={{color:C.text,fontSize:11,fontWeight:600}}>{addetto?.nome}</span>
+          <button onClick={logoutAddetto} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,padding:0,marginLeft:2}}>✕</button>
+        </div>
+      </div>
+    </div>
+
+    {/* Drawer menu */}
+    {menuOpen&&<div style={{position:"fixed",inset:0,zIndex:100,display:"flex"}} onClick={()=>setMenuOpen(false)}>
+      <div style={{width:"min(260px,80vw)",background:C.surface,borderRight:`1px solid ${C.border}`,padding:"20px 10px",height:"100%",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:"0 10px 16px",marginBottom:8,borderBottom:`1px solid ${C.border}`}}>
+          <div style={{fontWeight:800,fontSize:15,color:C.text}}>CrunchClub</div>
+          <div style={{fontSize:11,color:C.muted}}>CrunchClub · Supabase</div>
+        </div>
+        {NAV.map(n=><button key={n.id} onClick={()=>{setSection(n.id);setMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",background:section===n.id?C.accent+"20":"none",border:section===n.id?`1px solid ${C.accent}33`:"1px solid transparent",borderRadius:8,padding:"10px 14px",cursor:"pointer",marginBottom:4,color:section===n.id?C.accent:C.muted,fontWeight:section===n.id?700:400,fontSize:14}}>
+          <span style={{fontSize:18}}>{n.icon}</span>{n.label}
+        </button>)}
+      </div>
+    </div>}
+
+    {/* Content */}
+    <div style={{padding:"18px 16px",maxWidth:900,margin:"0 auto"}}>
+      {render()}
+    </div>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+</body>
+</html>
