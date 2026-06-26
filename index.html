@@ -818,11 +818,26 @@ function InstantWin({addetto}){
         <Stat icon="🏆" label="Vincitori" value={tokens.filter(t=>t.won).length} color={C.green}/>
         <Stat icon="⏳" label="Non giocati" value={tokens.filter(t=>t.status==="Non giocato").length} color={C.muted}/>
       </div>
-      {tokens.slice(0,30).map(t=><div key={t.id} style={{background:C.card,borderRadius:10,padding:14,marginBottom:8,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-        <div style={{fontFamily:"monospace",fontSize:11,color:C.muted,flex:1,minWidth:120,wordBreak:"break-all"}}>{t.token}</div>
-        <div style={{color:C.text,fontSize:12,minWidth:80}}>{t.customer_name}</div>
-        <Badge text={t.status} color={stColor(t.status)}/>
-        {t.prize_name&&<span style={{color:C.gold,fontSize:12}}>{t.prize_name}</span>}
+      {tokens.slice(0,50).map(t=><div key={t.id} style={{background:C.card,borderRadius:10,padding:14,marginBottom:8,border:`1px solid ${t.won&&!t.riscosso?C.gold+"44":C.border+"22`}}`}}>
+        <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:t.won&&!t.riscosso?8:0}}>
+          <div style={{fontFamily:"monospace",fontSize:11,color:C.muted,flex:1,minWidth:120,wordBreak:"break-all"}}>{t.token}</div>
+          <div style={{color:C.text,fontSize:12,minWidth:80}}>{t.customer_name||"—"}</div>
+          <Badge text={t.riscosso?"✅ Ritirato":t.status} color={t.riscosso?C.green:stColor(t.status)}/>
+          {t.prize_name&&<span style={{color:C.gold,fontSize:12}}>🏆 {t.prize_name}</span>}
+        </div>
+        {t.won&&!t.riscosso&&<div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <div style={{flex:1,background:C.gold+"11",border:`1px solid ${C.gold}33`,borderRadius:8,padding:"6px 10px",fontSize:11,color:C.gold}}>
+            Il cliente deve mostrare questa schermata per ritirare il premio
+          </div>
+          <button onClick={async()=>{
+            if(!confirm("Confermi che il premio è stato consegnato al cliente?"))return;
+            await sb.from("tokens").update({riscosso:true,riscosso_at:new Date().toISOString(),riscosso_da:addetto?.nome||""}).eq("id",t.id);
+            load();
+          }} style={{background:`linear-gradient(135deg,${C.green},${C.teal})`,border:"none",color:"#fff",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:700,fontSize:12,whiteSpace:"nowrap"}}>
+            ✅ Premio consegnato
+          </button>
+        </div>}
+        {t.riscosso&&<div style={{color:C.muted,fontSize:11,marginTop:4}}>Ritirato il {t.riscosso_at?.slice(0,10)||"—"} da {t.riscosso_da||"—"}</div>}
       </div>)}
       {tokens.length===0&&<div style={{background:C.card,borderRadius:12,padding:28,textAlign:"center",color:C.muted}}>Nessun token ancora.</div>}
     </div>}
@@ -1104,13 +1119,355 @@ function Segmentazione(){
 // ══════════════════════════════════════════════════════════════════════════
 const NAV=[
   {id:"dashboard",label:"Dashboard",icon:"📊"},
+  {id:"cassa",label:"Cassa",icon:"🛒"},
   {id:"clienti",label:"Clienti",icon:"👥"},
   {id:"instantwin",label:"Instant Win",icon:"🎰"},
   {id:"giftcard",label:"Gift Card",icon:"💳"},
   {id:"menu",label:"Menù",icon:"🍽️"},
   {id:"notifiche",label:"Notifiche",icon:"🔔"},
   {id:"segmenti",label:"Segmenti",icon:"🏷️"},
+  {id:"addetti",label:"Addetti",icon:"👮",adminOnly:true},
 ];
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADDETTI — solo admin
+// ══════════════════════════════════════════════════════════════════════════
+function Addetti({addetto}){
+  const{data:addetti,loading,err,load}=useTable("addetti","id");
+  const[showAdd,setShowAdd]=useState(false);
+  const[editItem,setEditItem]=useState(null);
+  const[form,setForm]=useState({nome:"",pin:"",ruolo:"addetto"});
+  const[saving,setSaving]=useState(false);
+  const[formErr,setFormErr]=useState("");
+  const[showLog,setShowLog]=useState(null); // addetto id per vedere storico
+  const[log,setLog]=useState([]);
+  const[logLoading,setLogLoading]=useState(false);
+  const[tab,setTab]=useState("lista");
+
+  const isAdmin=addetto?.ruolo==="admin";
+
+  const saveAddetto=async()=>{
+    if(!form.nome.trim()||!form.pin.trim()){setFormErr("Nome e PIN obbligatori.");return;}
+    if(!/^\d{4,8}$/.test(form.pin)){setFormErr("Il PIN deve essere numerico, 4-8 cifre.");return;}
+    setSaving(true);setFormErr("");
+    try{
+      if(editItem){
+        await sb.from("addetti").update({nome:form.nome.trim(),pin:form.pin,ruolo:form.ruolo}).eq("id",editItem.id);
+      }else{
+        // Verifica PIN non già usato
+        const{data:existing}=await sb.from("addetti").select("id").eq("pin",form.pin);
+        if(existing&&existing.length>0){setFormErr("PIN già in uso da un altro addetto.");setSaving(false);return;}
+        await sb.from("addetti").insert({nome:form.nome.trim(),pin:form.pin,ruolo:form.ruolo,attivo:true});
+      }
+      setShowAdd(false);setEditItem(null);setForm({nome:"",pin:"",ruolo:"addetto"});load();
+    }catch(e){setFormErr(e.message);}
+    setSaving(false);
+  };
+
+  const toggleAttivo=async(a)=>{
+    if(a.id===addetto?.id){alert("Non puoi disattivare te stesso.");return;}
+    await sb.from("addetti").update({attivo:!a.attivo}).eq("id",a.id);
+    load();
+  };
+
+  const loadLog=async(addettoId)=>{
+    setLogLoading(true);setLog([]);
+    // Carica token emessi
+    const{data:tokens}=await sb.from("tokens").select("token,customer_name,campaign_name,created_at,status,prize_name").eq("addetto_id",addettoId).order("created_at",{ascending:false}).limit(50);
+    // Carica acquisti registrati
+    const{data:acquisti}=await sb.from("acquisti").select("id,importo,punti,created_at,status,customer_id,addetto_nome").eq("addetto_id",addettoId).order("created_at",{ascending:false}).limit(50);
+    // Carica clienti registrati
+    const{data:clienti}=await sb.from("clienti").select("name,email,join_date,addetto_registrazione").eq("addetto_registrazione",addetti.find(a=>a.id===addettoId)?.nome||"").limit(50);
+    // Merge e ordina per data
+    const entries=[
+      ...(tokens||[]).map(t=>({tipo:"🎰 Token",desc:`${t.customer_name} — ${t.campaign_name}`,stato:t.status,data:t.created_at,extra:t.prize_name?`Premio: ${t.prize_name}`:""})),
+      ...(acquisti||[]).map(a=>({tipo:"💳 Acquisto",desc:`€${Number(a.importo).toFixed(2)} → +${a.punti} pt`,stato:a.status==="usato"?"Scansionato":"In attesa",data:a.created_at,extra:""})),
+      ...(clienti||[]).map(c=>({tipo:"👤 Registrazione",desc:`${c.name} (${c.email})`,stato:"Completata",data:c.join_date,extra:""})),
+    ].sort((a,b)=>new Date(b.data)-new Date(a.data));
+    setLog(entries);setLogLoading(false);
+  };
+
+  if(!isAdmin)return <div style={{padding:24,textAlign:"center"}}>
+    <div style={{fontSize:40,marginBottom:12}}>🔒</div>
+    <div style={{color:C.muted,fontSize:14}}>Sezione riservata all'amministratore.</div>
+  </div>;
+
+  return <div className="fade">
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+      <div><h2 style={{margin:0,fontSize:20,color:C.text}}>Addetti</h2><p style={{margin:"4px 0 0",color:C.muted,fontSize:13}}>{addetti.filter(a=>a.attivo).length} attivi</p></div>
+      <Btn onClick={()=>{setForm({nome:"",pin:"",ruolo:"addetto"});setEditItem(null);setShowAdd(true);}}>+ Nuovo</Btn>
+    </div>
+
+    {/* Tabs */}
+    <div style={{display:"flex",gap:4,marginBottom:16,background:C.primary,borderRadius:10,padding:4}}>
+      {[["lista","👥 Lista"],["log","📋 Storico operazioni"]].map(([id,label])=><button key={id} onClick={()=>setTab(id)} style={{flex:1,background:tab===id?C.card:"none",color:tab===id?C.text:C.muted,border:"none",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:tab===id?700:400,fontSize:13}}>{label}</button>)}
+    </div>
+
+    {tab==="lista"&&<div>
+      {loading?<Loading/>:addetti.map(a=><div key={a.id} style={{background:C.card,borderRadius:12,padding:16,marginBottom:10,border:`1px solid ${a.attivo?C.border:C.dim}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <div style={{width:40,height:40,background:a.ruolo==="admin"?`linear-gradient(135deg,${C.accent},${C.gold})`:`linear-gradient(135deg,${C.teal},${C.blue})`,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>
+              {a.ruolo==="admin"?"👑":"👤"}
+            </div>
+            <div>
+              <div style={{color:a.attivo?C.text:C.muted,fontWeight:700,fontSize:15}}>{a.nome}</div>
+              <div style={{display:"flex",gap:8,marginTop:3}}>
+                <span style={{background:(a.ruolo==="admin"?C.accent:C.teal)+"22",color:a.ruolo==="admin"?C.accent:C.teal,border:`1px solid ${(a.ruolo==="admin"?C.accent:C.teal)}44`,borderRadius:20,padding:"2px 8px",fontSize:11,fontWeight:600}}>{a.ruolo}</span>
+                {!a.attivo&&<span style={{background:C.dim+"22",color:C.muted,borderRadius:20,padding:"2px 8px",fontSize:11}}>Disattivato</span>}
+              </div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <Btn sm color={C.teal} outline onClick={()=>{setShowLog(a.id);loadLog(a.id);setTab("log");}}>📋</Btn>
+            {a.id!==addetto?.id&&<>
+              <Btn sm color={C.gold} outline onClick={()=>{setEditItem(a);setForm({nome:a.nome,pin:a.pin,ruolo:a.ruolo});setShowAdd(true);}}>✏️</Btn>
+              <Btn sm color={a.attivo?C.accent:C.green} outline onClick={()=>toggleAttivo(a)}>{a.attivo?"🔒":"🔓"}</Btn>
+            </>}
+            {a.id===addetto?.id&&<span style={{color:C.muted,fontSize:11,padding:"6px 10px"}}>← Sei tu</span>}
+          </div>
+        </div>
+        <div style={{display:"flex",gap:16,marginTop:4}}>
+          <div style={{color:C.muted,fontSize:12}}>PIN: <span style={{fontFamily:"monospace",color:C.dim}}>{"•".repeat(a.pin?.length||4)}</span></div>
+          <div style={{color:C.muted,fontSize:12}}>Dal: {a.created_at?.slice(0,10)||"—"}</div>
+        </div>
+      </div>)}
+    </div>}
+
+    {tab==="log"&&<div>
+      {/* Selettore addetto */}
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
+        {addetti.map(a=><button key={a.id} onClick={()=>{setShowLog(a.id);loadLog(a.id);}} style={{background:showLog===a.id?C.accent:C.card,color:showLog===a.id?"#fff":C.muted,border:"none",borderRadius:20,padding:"6px 14px",cursor:"pointer",fontSize:12,fontWeight:showLog===a.id?700:400}}>{a.nome}</button>)}
+      </div>
+      {!showLog&&<div style={{background:C.card,borderRadius:12,padding:24,textAlign:"center",color:C.muted,fontSize:14}}>Seleziona un addetto per vedere le sue operazioni</div>}
+      {showLog&&logLoading&&<Loading/>}
+      {showLog&&!logLoading&&log.length===0&&<div style={{background:C.card,borderRadius:12,padding:24,textAlign:"center",color:C.muted,fontSize:14}}>Nessuna operazione registrata</div>}
+      {showLog&&!logLoading&&log.map((entry,i)=><div key={i} style={{background:C.card,borderRadius:12,padding:14,marginBottom:8,display:"flex",gap:12,alignItems:"flex-start"}}>
+        <div style={{fontSize:20,flexShrink:0}}>{entry.tipo.split(" ")[0]}</div>
+        <div style={{flex:1}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+            <div style={{color:C.text,fontSize:13,fontWeight:600}}>{entry.tipo.split(" ").slice(1).join(" ")}</div>
+            <div style={{color:C.dim,fontSize:11,flexShrink:0,marginLeft:8}}>{entry.data?.slice(0,10)||"—"}</div>
+          </div>
+          <div style={{color:C.muted,fontSize:12}}>{entry.desc}</div>
+          {entry.extra&&<div style={{color:C.gold,fontSize:11,marginTop:2}}>{entry.extra}</div>}
+          <div style={{marginTop:4}}><span style={{background:C.teal+"22",color:C.teal,border:`1px solid ${C.teal}44`,borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:600}}>{entry.stato}</span></div>
+        </div>
+      </div>)}
+    </div>}
+
+    {showAdd&&<Modal title={editItem?"✏️ Modifica addetto":"👮 Nuovo addetto"} onClose={()=>{setShowAdd(false);setEditItem(null);}}>
+      {formErr&&<div style={{background:C.accent+"22",border:`1px solid ${C.accent}44`,borderRadius:8,padding:"10px 14px",color:C.accent,fontSize:13,marginBottom:12}}>{formErr}</div>}
+      <Inp label="Nome" value={form.nome} onChange={v=>setForm({...form,nome:v})} placeholder="Es. Mario Rossi" req/>
+      <div style={{marginBottom:13}}>
+        <label style={{color:C.muted,fontSize:11,display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:.5}}>PIN numerico (4-8 cifre) <span style={{color:C.accent}}>*</span></label>
+        <input type="password" inputMode="numeric" value={form.pin} onChange={e=>setForm({...form,pin:e.target.value.replace(/\D/g,"")})} placeholder="••••" maxLength={8} style={{width:"100%",background:C.primary,color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",fontSize:18,letterSpacing:6,textAlign:"center",boxSizing:"border-box"}}/>
+        <div style={{color:C.dim,fontSize:11,marginTop:4}}>Solo numeri. Non usare date di nascita o numeri ovvi.</div>
+      </div>
+      <Inp label="Ruolo" value={form.ruolo} onChange={v=>setForm({...form,ruolo:v})} opts={["addetto","admin"]}/>
+      {form.ruolo==="admin"&&<div style={{background:C.gold+"11",border:`1px solid ${C.gold}33`,borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12,color:C.gold}}>⚠️ Gli admin possono gestire addetti e vedere tutte le operazioni.</div>}
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+        <Btn outline color={C.muted} onClick={()=>{setShowAdd(false);setEditItem(null);}}>Annulla</Btn>
+        <Btn onClick={saveAddetto} disabled={saving}>{saving?<Spinner/>:(editItem?"Salva":"Crea")}</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// CASSA — registra acquisto veloce senza selezionare cliente
+// ══════════════════════════════════════════════════════════════════════════
+function Cassa({addetto}){
+  const{data:camps}=useTable("campagne","id");
+  const[importo,setImporto]=useState("");
+  const[result,setResult]=useState(null);
+  const[saving,setSaving]=useState(false);
+  const[btStatus,setBtStatus]=useState("disconnected");
+  const[btMsg,setBtMsg]=useState("");
+  const[printDone,setPrintDone]=useState(false);
+
+  const activeCamp=camps.find(c=>c.active);
+  const imp=parseFloat(importo)||0;
+  const punti=Math.floor(imp);
+  const soglia=activeCamp?Number(activeCamp.trigger_value):20;
+  const hasToken=activeCamp&&imp>=soglia;
+
+  const genera=async()=>{
+    if(!imp||imp<=0)return;
+    setSaving(true);
+    const acqId=genAcqID();
+    const acqUrl=buildAcquistoURL(acqId);
+    let tokenId=null;
+    if(hasToken){
+      const tk={id:uid(),token:genTK(),customer_id:null,customer_name:"",campaign_id:activeCamp.id,campaign_name:activeCamp.name,created_at:today(),status:"Non giocato",addetto_id:addetto?.id||null,addetto_nome:addetto?.nome||""};
+      await sb.from("tokens").insert(tk);
+      tokenId=tk.id;
+      const stats=typeof activeCamp.stats==="string"?JSON.parse(activeCamp.stats):activeCamp.stats;
+      await sb.from("campagne").update({stats:JSON.stringify({...stats,generated:stats.generated+1})}).eq("id",activeCamp.id);
+    }
+    await sb.from("acquisti").insert({id:acqId,importo:imp,punti,campaign_id:activeCamp?.id||null,token_iw:tokenId,customer_id:null,status:"non_usato",addetto_id:addetto?.id||null,addetto_nome:addetto?.nome||"",created_time:new Date().toISOString()});
+    setResult({acqId,acqUrl,punti,importo:imp,hasToken,campagna:activeCamp?.name||""});
+    setPrintDone(false);setSaving(false);
+  };
+
+  const reset=()=>{setResult(null);setImporto("");setPrintDone(false);setBtMsg("");};
+
+  const connectPrinter=async()=>{
+    setBtStatus("connecting");setBtMsg("");
+    try{const n=await BTP.connect();setBtStatus("connected");setBtMsg("✅ "+n);}
+    catch(e){setBtStatus("error");setBtMsg(e.message);}
+  };
+
+  const printAcquisto=async()=>{
+    if(!BTP.isConnected()){setBtMsg("Connetti prima la stampante.");return;}
+    setBtStatus("printing");
+    try{
+      const enc=new TextEncoder();const b=[];
+      const push=(...a)=>a.forEach(x=>b.push(x));
+      const text=s=>enc.encode(s).forEach(x=>b.push(x));
+      const ESC=0x1B,GS=0x1D,LF=0x0A;
+      push(ESC,0x40);push(ESC,0x61,0x01);
+      push(ESC,0x21,0x30);text("CRUNCHCLUB\n");push(ESC,0x21,0x00);
+      text("========================\n");
+      push(ESC,0x21,0x08);text("Registra il tuo acquisto\n");push(ESC,0x21,0x00);
+      text("Data: "+new Date().toLocaleDateString("it-IT")+"\n");
+      text("------------------------\n");
+      push(ESC,0x61,0x00);
+      text("Importo:  \u20ac"+result.importo.toFixed(2)+"\n");
+      text("Punti:    +"+result.punti+" pt\n");
+      if(result.hasToken)text("Bonus:    1 Gratta e Vinci!\n");
+      text("------------------------\n");
+      push(ESC,0x61,0x01);
+      push(ESC,0x21,0x08);text("Scansiona il QR\n");push(ESC,0x21,0x00);
+      text("con il tuo telefono\n\n");
+      const qd=enc.encode(result.acqUrl);const ql=qd.length+3;
+      push(GS,0x28,0x6B,0x04,0x00,0x31,0x41,0x32,0x00);
+      push(GS,0x28,0x6B,0x03,0x00,0x31,0x43,0x07);
+      push(GS,0x28,0x6B,0x03,0x00,0x31,0x45,0x30);
+      push(GS,0x28,0x6B,ql&0xFF,(ql>>8)&0xFF,0x31,0x50,0x30,...qd);
+      push(GS,0x28,0x6B,0x03,0x00,0x31,0x51,0x30);
+      push(LF);text("========================\n");
+      text("Grazie!\n\n\n");
+      push(GS,0x56,0x41,0x03);
+      await BTP.write(new Uint8Array(b));
+      setBtStatus("connected");setBtMsg("✅ Stampato!");setPrintDone(true);
+    }catch(e){setBtStatus("error");setBtMsg("❌ "+e.message);}
+  };
+
+  const btCol={disconnected:C.muted,connecting:C.gold,connected:C.green,printing:C.blue,error:C.accent}[btStatus];
+
+  return <div className="fade">
+    <div style={{marginBottom:20}}>
+      <h2 style={{margin:0,fontSize:20,color:C.text}}>🛒 Cassa</h2>
+      <p style={{color:C.muted,fontSize:13,marginTop:4}}>Genera QR acquisto istantaneo</p>
+    </div>
+
+    {!result?<div style={{maxWidth:420}}>
+      {/* Importo */}
+      <div style={{background:C.card,borderRadius:16,padding:24,marginBottom:16}}>
+        <label style={{color:C.muted,fontSize:11,display:"block",marginBottom:10,textTransform:"uppercase",letterSpacing:.5}}>Importo scontrino (€)</label>
+        <input
+          type="number" inputMode="decimal" value={importo}
+          onChange={e=>setImporto(e.target.value)}
+          onKeyDown={e=>e.key==="Enter"&&imp>0&&genera()}
+          placeholder="0.00" autoFocus
+          style={{width:"100%",background:C.primary,color:C.gold,border:`2px solid ${imp>0?C.gold:C.border}`,borderRadius:12,padding:"16px 20px",fontSize:28,fontWeight:800,textAlign:"center",boxSizing:"border-box",transition:"border-color .2s"}}
+        />
+        {/* Anteprima punti e token */}
+        {imp>0&&<div style={{marginTop:16,display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div style={{background:C.primary,borderRadius:10,padding:14,textAlign:"center"}}>
+            <div style={{color:C.gold,fontWeight:800,fontSize:20}}>+{punti}</div>
+            <div style={{color:C.muted,fontSize:12,marginTop:2}}>punti</div>
+          </div>
+          <div style={{background:hasToken?C.orange+"22":C.primary,borderRadius:10,padding:14,textAlign:"center",border:hasToken?`1px solid ${C.orange}44`:"none"}}>
+            {hasToken
+              ?<><div style={{fontSize:20}}>🎰</div><div style={{color:C.orange,fontSize:12,fontWeight:700,marginTop:2}}>Gratta e Vinci!</div></>
+              :<><div style={{color:C.dim,fontWeight:700,fontSize:14}}>€{(soglia-imp).toFixed(2)}</div><div style={{color:C.dim,fontSize:11,marginTop:2}}>al Gratta e Vinci</div></>
+            }
+          </div>
+        </div>}
+      </div>
+
+      {/* Campagna attiva info */}
+      {activeCamp&&<div style={{background:C.primary,borderRadius:10,padding:12,marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{color:C.muted,fontSize:12}}>Campagna attiva</div>
+        <div style={{color:C.teal,fontWeight:600,fontSize:13}}>{activeCamp.name}</div>
+      </div>}
+      {!activeCamp&&<div style={{background:C.accent+"11",border:`1px solid ${C.accent}33`,borderRadius:10,padding:12,marginBottom:16,color:C.accent,fontSize:12}}>
+        ⚠️ Nessuna campagna Instant Win attiva — i punti verranno assegnati ma non ci sarà gratta e vinci.
+      </div>}
+
+      {/* Addetto loggato */}
+      <div style={{background:C.primary,borderRadius:10,padding:12,marginBottom:20,display:"flex",justifyContent:"space-between"}}>
+        <span style={{color:C.muted,fontSize:12}}>Addetto</span>
+        <span style={{color:C.text,fontWeight:600,fontSize:12}}>👤 {addetto?.nome||"—"}</span>
+      </div>
+
+      <button onClick={genera} disabled={!imp||imp<=0||saving} style={{width:"100%",background:imp>0?`linear-gradient(135deg,${C.accent},${C.gold})`:`${C.dim}44`,border:"none",color:imp>0?"#fff":C.dim,borderRadius:14,padding:"18px",fontSize:18,fontWeight:900,cursor:imp>0?"pointer":"not-allowed",transition:"all .2s"}}>
+        {saving?<Spinner/>:"⚡ Genera QR →"}
+      </button>
+    </div>
+
+    :<div style={{maxWidth:420}}>
+      <div style={{textAlign:"center",marginBottom:20}}>
+        <div style={{fontSize:40,marginBottom:8}}>✅</div>
+        <div style={{color:C.text,fontWeight:700,fontSize:18,marginBottom:4}}>QR pronto!</div>
+        <div style={{color:C.muted,fontSize:13}}>Mostra al cliente da scansionare</div>
+      </div>
+
+      {/* QR Code */}
+      <div style={{background:C.card,borderRadius:16,padding:20,marginBottom:16,textAlign:"center"}}>
+        <QRSvg value={result.acqUrl} size={220}/>
+        <div style={{marginTop:10,color:C.dim,fontSize:10,wordBreak:"break-all"}}>{result.acqUrl}</div>
+      </div>
+
+      {/* Riepilogo */}
+      <div style={{background:C.card,borderRadius:12,padding:16,marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${C.border}22`}}>
+          <span style={{color:C.muted,fontSize:13}}>Importo</span>
+          <span style={{color:C.text,fontWeight:700}}>€ {result.importo.toFixed(2)}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:result.hasToken?`1px solid ${C.border}22`:"none"}}>
+          <span style={{color:C.muted,fontSize:13}}>Punti cliente</span>
+          <span style={{color:C.gold,fontWeight:800}}>+{result.punti} pt</span>
+        </div>
+        {result.hasToken&&<div style={{display:"flex",justifyContent:"space-between",padding:"6px 0"}}>
+          <span style={{color:C.muted,fontSize:13}}>Gratta e Vinci</span>
+          <span style={{color:C.orange,fontWeight:700}}>🎰 Incluso</span>
+        </div>}
+      </div>
+
+      {/* Bluetooth */}
+      <div style={{background:C.card,borderRadius:12,padding:16,marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <span style={{color:C.text,fontWeight:700}}>🖨️ Stampa</span>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <div style={{width:8,height:8,borderRadius:"50%",background:btCol,boxShadow:`0 0 6px ${btCol}`}}/>
+            <span style={{color:btCol,fontSize:12}}>{{disconnected:"Off",connecting:"…",connected:"✓",printing:"Stampa…",error:"Errore"}[btStatus]}</span>
+          </div>
+        </div>
+        {btMsg&&<div style={{background:btCol+"22",border:`1px solid ${btCol}33`,borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:12,color:btCol}}>{btMsg}</div>}
+        {!navigator.bluetooth&&<div style={{color:C.muted,fontSize:12}}>Stampa disponibile su Chrome Android con HTTPS.</div>}
+        {navigator.bluetooth&&<div style={{display:"flex",gap:8}}>
+          {(btStatus==="disconnected"||btStatus==="error")&&<button onClick={connectPrinter} style={{flex:1,background:C.teal,color:"#fff",border:"none",borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:700}}>🔗 Connetti</button>}
+          {btStatus==="connected"&&<><button onClick={printAcquisto} style={{flex:2,background:`linear-gradient(135deg,${C.gold},${C.orange})`,color:"#000",border:"none",borderRadius:8,padding:"10px",cursor:"pointer",fontWeight:800,fontSize:14}}>🖨️ Stampa</button><button onClick={()=>{BTP.disconnect();setBtStatus("disconnected");setBtMsg("");}} style={{flex:1,background:"none",border:`1px solid ${C.muted}44`,color:C.muted,borderRadius:8,padding:"10px",cursor:"pointer",fontSize:12}}>✕</button></>}
+          {btStatus==="printing"&&<div style={{flex:1,background:C.blue+"22",borderRadius:8,padding:"10px",textAlign:"center",color:C.blue}}>⏳</div>}
+        </div>}
+        {printDone&&<div style={{marginTop:8,background:C.green+"22",border:`1px solid ${C.green}33`,borderRadius:8,padding:"8px 12px",fontSize:12,color:C.green}}>✅ Bigliettino stampato!</div>}
+      </div>
+
+      <div style={{background:C.accent+"11",border:`1px solid ${C.accent}33`,borderRadius:10,padding:12,marginBottom:16,fontSize:12,color:C.muted}}>
+        ⚠️ QR <b style={{color:C.text}}>monouso</b> — bruciato automaticamente dopo la prima scansione.
+      </div>
+
+      <button onClick={reset} style={{width:"100%",background:`linear-gradient(135deg,${C.accent},${C.gold})`,border:"none",color:"#fff",borderRadius:14,padding:"16px",fontSize:16,fontWeight:800,cursor:"pointer"}}>
+        ⚡ Nuovo acquisto
+      </button>
+    </div>}
+  </div>;
+}
 
 // ── LOGIN ADDETTO ─────────────────────────────────────────────────────────
 function LoginAddetto({onLogin}){
@@ -1175,12 +1532,14 @@ function App(){
   const render=()=>{
     switch(section){
       case "dashboard": return <Dashboard/>;
+      case "cassa":     return <Cassa addetto={addetto}/>;
       case "clienti":   return <Clienti addetto={addetto}/>;
       case "instantwin":return <InstantWin addetto={addetto}/>;
       case "giftcard":  return <GiftCards/>;
       case "menu":      return <MenuDigitale/>;
       case "notifiche": return <Notifiche/>;
       case "segmenti":  return <Segmentazione/>;
+      case "addetti":   return <Addetti addetto={addetto}/>;
       default:          return <Dashboard/>;
     }
   };
@@ -1231,7 +1590,7 @@ function App(){
           <div style={{fontWeight:800,fontSize:15,color:C.text}}>CrunchClub</div>
           <div style={{fontSize:11,color:C.muted}}>CrunchClub · Supabase</div>
         </div>
-        {NAV.map(n=><button key={n.id} onClick={()=>{setSection(n.id);setMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",background:section===n.id?C.accent+"20":"none",border:section===n.id?`1px solid ${C.accent}33`:"1px solid transparent",borderRadius:8,padding:"10px 14px",cursor:"pointer",marginBottom:4,color:section===n.id?C.accent:C.muted,fontWeight:section===n.id?700:400,fontSize:14}}>
+        {NAV.filter(n=>!n.adminOnly||addetto?.ruolo==="admin").map(n=><button key={n.id} onClick={()=>{setSection(n.id);setMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",background:section===n.id?C.accent+"20":"none",border:section===n.id?`1px solid ${C.accent}33`:"1px solid transparent",borderRadius:8,padding:"10px 14px",cursor:"pointer",marginBottom:4,color:section===n.id?C.accent:C.muted,fontWeight:section===n.id?700:400,fontSize:14}}>
           <span style={{fontSize:18}}>{n.icon}</span>{n.label}
         </button>)}
       </div>
