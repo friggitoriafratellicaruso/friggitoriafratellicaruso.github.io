@@ -51,7 +51,7 @@ const genAcqID=()=>"ACQ-"+uid()+uid();
 // Genera URL con parametri e lo incapsula in un QR visivo semplice
 // In produzione usa una lib vera; questo è un placeholder visivo con URL embedded
 function buildAcquistoURL(id){
-  return `https://friggitoriafratellicaruso.github.io/cliente.html?acq=${id}`;
+  return `https://friggitoriafratellicaruso.github.io/crunchclub?acq=${id}`;
 }
 
 function QRSvg({value,size=200}){
@@ -484,7 +484,7 @@ function Clienti({addetto}){
     if(!BTP.isConnected()){setBtMsg("Connetti prima.");return;}
     setBtStatus("printing");
     try{
-      await BTP.write(BTP.buildReceipt({token:tk.token,campaignName:tk.campaign_name,customerName:tk.customer_name,date:new Date().toLocaleDateString("it-IT"),playUrl:`https://app.miolocale.it/gioca?t=${tk.token}`}));
+      await BTP.write(BTP.buildReceipt({token:tk.token,campaignName:tk.campaign_name,customerName:tk.customer_name,date:new Date().toLocaleDateString("it-IT"),playUrl:`https://friggitoriafratellicaruso.github.io/crunchclub?t=${tk.token}`}));
       setBtStatus("connected");setBtMsg("✅ Stampato!");setPrintDone(true);
     }catch(e){setBtStatus("error");setBtMsg("❌ "+e.message);}
   };
@@ -651,7 +651,7 @@ function Clienti({addetto}){
         </div>
         <div style={{marginBottom:14}}>
           <div style={{color:C.muted,fontSize:11,textTransform:"uppercase",marginBottom:8}}>QR Code</div>
-          <QRDisplay value={`https://app.miolocale.it/gioca?t=${genToken_.token}`} size={110}/>
+          <QRDisplay value={`https://friggitoriafratellicaruso.github.io/crunchclub?t=${genToken_.token}`} size={110}/>
         </div>
         {/* BLUETOOTH */}
         <div style={{background:C.primary,borderRadius:12,padding:16,marginBottom:12,textAlign:"left"}}>
