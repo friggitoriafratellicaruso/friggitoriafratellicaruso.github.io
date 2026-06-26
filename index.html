@@ -9,6 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
   body{background:#0D1117;color:#E6EDF3;font-family:'Inter',system-ui,sans-serif;overflow-x:hidden}
@@ -53,19 +54,22 @@ function buildAcquistoURL(id){
   return `https://friggitoriafratellicaruso.github.io/cliente.html?acq=${id}`;
 }
 
-function QRSvg({value,size=180}){
-  const s=25;
-  const m=Array.from({length:s},()=>Array(s).fill(0));
-  const fp=(r,c)=>{for(let i=0;i<7;i++)for(let j=0;j<7;j++){if(i===0||i===6||j===0||j===6||(i>=2&&i<=4&&j>=2&&j<=4))m[r+i][c+j]=1;}};
-  fp(0,0);fp(0,18);fp(18,0);
-  for(let i=8;i<17;i++){m[6][i]=i%2===0?1:0;m[i][6]=i%2===0?1:0;}
-  let h=0;for(let i=0;i<value.length;i++)h=((h<<5)-h+value.charCodeAt(i))|0;
-  for(let r=0;r<s;r++)for(let c=0;c<s;c++){if(m[r][c]===0)m[r][c]=((h^(r*19+c*11))&1);}
-  const cell=size/s;
-  return <div style={{background:"#fff",padding:10,borderRadius:12,display:"inline-block"}}>
-    <div style={{display:"grid",gridTemplateColumns:`repeat(${s},${cell}px)`}}>
-      {m.flat().map((v,i)=><div key={i} style={{width:cell,height:cell,background:v?"#000":"#fff"}}/>)}
-    </div>
+function QRSvg({value,size=200}){
+  const ref=useRef(null);
+  useEffect(()=>{
+    if(!ref.current||!value)return;
+    ref.current.innerHTML="";
+    new QRCode(ref.current,{
+      text:value,
+      width:size,
+      height:size,
+      colorDark:"#000000",
+      colorLight:"#ffffff",
+      correctLevel:QRCode.CorrectLevel.M
+    });
+  },[value,size]);
+  return <div style={{background:"#fff",padding:12,borderRadius:12,display:"inline-block"}}>
+    <div ref={ref}/>
   </div>;
 }
 
@@ -158,19 +162,22 @@ const BTP={
 };
 
 // ── QR DISPLAY ────────────────────────────────────────────────────────────
-function QRDisplay({value,size=110}){
-  const s=21;
-  const m=Array.from({length:s},()=>Array(s).fill(0));
-  const fp=(r,c)=>{for(let i=0;i<7;i++)for(let j=0;j<7;j++){if(i===0||i===6||j===0||j===6||(i>=2&&i<=4&&j>=2&&j<=4))m[r+i][c+j]=1;}};
-  fp(0,0);fp(0,14);fp(14,0);
-  for(let i=8;i<13;i++){m[6][i]=i%2===0?1:0;m[i][6]=i%2===0?1:0;}
-  let h=0;for(let i=0;i<value.length;i++)h=((h<<5)-h+value.charCodeAt(i))|0;
-  for(let r=0;r<s;r++)for(let c=0;c<s;c++){if(m[r][c]===0)m[r][c]=((h^(r*17+c*13))&1);}
-  const cell=size/s;
-  return <div style={{background:"#fff",padding:8,borderRadius:8,display:"inline-block"}}>
-    <div style={{display:"grid",gridTemplateColumns:`repeat(${s},${cell}px)`}}>
-      {m.flat().map((v,i)=><div key={i} style={{width:cell,height:cell,background:v?"#000":"#fff"}}/>)}
-    </div>
+function QRDisplay({value,size=120}){
+  const ref=useRef(null);
+  useEffect(()=>{
+    if(!ref.current||!value)return;
+    ref.current.innerHTML="";
+    new QRCode(ref.current,{
+      text:value,
+      width:size,
+      height:size,
+      colorDark:"#000000",
+      colorLight:"#ffffff",
+      correctLevel:QRCode.CorrectLevel.M
+    });
+  },[value,size]);
+  return <div style={{background:"#fff",padding:10,borderRadius:10,display:"inline-block"}}>
+    <div ref={ref}/>
   </div>;
 }
 
