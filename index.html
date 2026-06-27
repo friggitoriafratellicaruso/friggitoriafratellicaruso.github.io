@@ -10,6 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
   body{background:#0D1117;color:#E6EDF3;font-family:'Inter',system-ui,sans-serif;overflow-x:hidden}
@@ -1547,13 +1548,80 @@ function Addetti({addetto}){
 // ══════════════════════════════════════════════════════════════════════════
 // RISCATTA PREMIO — tab nella Cassa per verificare/confermare riscatti
 // ══════════════════════════════════════════════════════════════════════════
+function QRScanner({onResult,onClose}){
+  const videoRef=useRef(null);
+  const canvasRef=useRef(null);
+  const rafRef=useRef(null);
+  const streamRef=useRef(null);
+  const[err,setErr]=useState("");
+  const[scanning,setScanning]=useState(true);
+
+  useEffect(()=>{
+    let active=true;
+    (async()=>{
+      try{
+        const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+        if(!active){stream.getTracks().forEach(t=>t.stop());return;}
+        streamRef.current=stream;
+        if(videoRef.current){videoRef.current.srcObject=stream;videoRef.current.play();}
+        const tick=()=>{
+          if(!active)return;
+          const v=videoRef.current,c=canvasRef.current;
+          if(v&&v.readyState===v.HAVE_ENOUGH_DATA&&c){
+            c.width=v.videoWidth;c.height=v.videoHeight;
+            const ctx=c.getContext("2d");
+            ctx.drawImage(v,0,0,c.width,c.height);
+            const img=ctx.getImageData(0,0,c.width,c.height);
+            const qr=window.jsQR&&window.jsQR(img.data,img.width,img.height,{inversionAttempts:"dontInvert"});
+            if(qr&&qr.data){
+              active=false;setScanning(false);
+              streamRef.current?.getTracks().forEach(t=>t.stop());
+              onResult(qr.data);
+              return;
+            }
+          }
+          rafRef.current=requestAnimationFrame(tick);
+        };
+        rafRef.current=requestAnimationFrame(tick);
+      }catch(e){setErr("Camera non disponibile: "+e.message);}
+    })();
+    return()=>{
+      active=false;
+      cancelAnimationFrame(rafRef.current);
+      streamRef.current?.getTracks().forEach(t=>t.stop());
+    };
+  },[]);
+
+  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.92)",zIndex:1000,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20}}>
+    <div style={{width:"100%",maxWidth:360}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <div style={{color:"#fff",fontWeight:700,fontSize:17}}>📷 Scansiona QR riscatto</div>
+        <button onClick={onClose} style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:13}}>✕ Chiudi</button>
+      </div>
+      {err
+        ?<div style={{background:C.accent+"22",border:`1px solid ${C.accent}44`,borderRadius:12,padding:20,color:C.accent,textAlign:"center"}}>{err}</div>
+        :<div style={{position:"relative",borderRadius:18,overflow:"hidden",background:"#000"}}>
+          <video ref={videoRef} muted playsInline style={{width:"100%",display:"block",maxHeight:360,objectFit:"cover"}}/>
+          {/* mirino */}
+          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+            <div style={{width:200,height:200,border:`3px solid ${scanning?C.gold:"#0f0"}`,borderRadius:12,boxShadow:`0 0 0 2000px rgba(0,0,0,.45)`,transition:"border-color .2s"}}/>
+          </div>
+          {scanning&&<div style={{position:"absolute",bottom:14,left:0,right:0,textAlign:"center",color:"#fff",fontSize:12,opacity:.8}}>Inquadra il QR del cliente</div>}
+        </div>
+      }
+      <canvas ref={canvasRef} style={{display:"none"}}/>
+    </div>
+  </div>;
+}
+
 function RiscattiPanel({addetto}){
   const[codice,setCodice]=useState("");
-  const[found,setFound]=useState(null);   // riscatto trovato
+  const[found,setFound]=useState(null);
   const[checking,setChecking]=useState(false);
   const[confirming,setConfirming]=useState(false);
-  const[msg,setMsg]=useState(null);       // {type:"ok"|"err", text}
+  const[msg,setMsg]=useState(null);
   const[recenti,setRecenti]=useState([]);
+  const[showScanner,setShowScanner]=useState(false);
 
   useEffect(()=>{loadRecenti();},[]);
 
@@ -1562,11 +1630,12 @@ function RiscattiPanel({addetto}){
     setRecenti(data||[]);
   };
 
-  const cerca=async()=>{
-    const c=codice.trim().toUpperCase();
-    if(!c)return;
+  const cerca=async(c)=>{
+    const cod=(c||codice).trim().toUpperCase();
+    if(!cod)return;
+    if(c)setCodice(c);
     setChecking(true);setFound(null);setMsg(null);
-    const{data,error}=await sb.from("riscatti").select("*").eq("qr_code",c).single();
+    const{data,error}=await sb.from("riscatti").select("*").eq("qr_code",cod).single();
     setChecking(false);
     if(error||!data){setMsg({type:"err",text:"❌ Codice non trovato o non valido."});return;}
     if(data.status==="riscattato"){setMsg({type:"err",text:`❌ Premio già riscosso il ${data.riscattato_at?.slice(0,10)||"—"} da ${data.riscattato_da||"—"}.`});return;}
@@ -1574,11 +1643,15 @@ function RiscattiPanel({addetto}){
     setFound(data);
   };
 
+  const onScan=(val)=>{
+    setShowScanner(false);
+    cerca(val.trim().toUpperCase());
+  };
+
   const conferma=async()=>{
     if(!found)return;
     setConfirming(true);
     try{
-      // 1. Scala punti al cliente
       if(found.customer_id){
         const{data:cl}=await sb.from("clienti").select("points").eq("id",found.customer_id).single();
         if(cl){
@@ -1586,7 +1659,6 @@ function RiscattiPanel({addetto}){
           await sb.from("clienti").update({points:newPts,tier:calcTier(newPts)}).eq("id",found.customer_id);
         }
       }
-      // 2. Marca riscatto come completato
       await sb.from("riscatti").update({
         status:"riscattato",
         riscattato_at:new Date().toISOString(),
@@ -1600,15 +1672,31 @@ function RiscattiPanel({addetto}){
   };
 
   return <div>
+    {showScanner&&<QRScanner onResult={onScan} onClose={()=>setShowScanner(false)}/>}
+
     <div style={{background:C.card,borderRadius:14,padding:20,marginBottom:16}}>
       <div style={{color:C.muted,fontSize:11,textTransform:"uppercase",letterSpacing:.5,marginBottom:10}}>Codice riscatto</div>
+
+      {/* Pulsante scansiona QR */}
+      <button onClick={()=>{setMsg(null);setFound(null);setShowScanner(true);}}
+        style={{width:"100%",background:`linear-gradient(135deg,${C.accent},${C.gold})`,border:"none",color:"#000",borderRadius:12,padding:"16px",fontSize:16,fontWeight:900,cursor:"pointer",marginBottom:12,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+        <span style={{fontSize:22}}>📷</span> Scansiona QR
+      </button>
+
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+        <div style={{flex:1,height:1,background:C.border}}/>
+        <span style={{color:C.dim,fontSize:12}}>oppure inserisci manualmente</span>
+        <div style={{flex:1,height:1,background:C.border}}/>
+      </div>
+
       <input
         value={codice} onChange={e=>{setCodice(e.target.value.toUpperCase());setMsg(null);setFound(null);}}
         onKeyDown={e=>e.key==="Enter"&&cerca()}
         placeholder="RIS-XXXXX-XXXXX"
-        style={{width:"100%",background:C.primary,color:C.gold,border:`2px solid ${codice?C.gold:C.border}`,borderRadius:12,padding:"14px 16px",fontSize:16,fontFamily:"monospace",textAlign:"center",letterSpacing:2,boxSizing:"border-box",marginBottom:12}}
+        style={{width:"100%",background:C.primary,color:C.gold,border:`2px solid ${codice?C.gold:C.border}`,borderRadius:12,padding:"13px 16px",fontSize:15,fontFamily:"monospace",textAlign:"center",letterSpacing:2,boxSizing:"border-box",marginBottom:10}}
       />
-      <button onClick={cerca} disabled={!codice.trim()||checking} style={{width:"100%",background:`linear-gradient(135deg,${C.teal},${C.blue})`,border:"none",color:"#fff",borderRadius:10,padding:"13px",fontSize:15,fontWeight:800,cursor:"pointer",opacity:(!codice.trim()||checking)?.5:1}}>
+      <button onClick={()=>cerca()} disabled={!codice.trim()||checking}
+        style={{width:"100%",background:C.teal,border:"none",color:"#fff",borderRadius:10,padding:"12px",fontSize:14,fontWeight:800,cursor:"pointer",opacity:(!codice.trim()||checking)?.5:1}}>
         {checking?<Spinner/>:"🔍 Verifica codice"}
       </button>
     </div>
@@ -1616,7 +1704,7 @@ function RiscattiPanel({addetto}){
     {msg&&<div style={{background:(msg.type==="ok"?C.green:C.accent)+"22",border:`1px solid ${(msg.type==="ok"?C.green:C.accent)}44`,borderRadius:12,padding:"14px 16px",marginBottom:16,color:msg.type==="ok"?C.green:C.accent,fontSize:14,fontWeight:600}}>{msg.text}</div>}
 
     {found&&<div style={{background:C.card,borderRadius:14,padding:20,marginBottom:16,border:`2px solid ${C.gold}44`}}>
-      <div style={{fontSize:32,textAlign:"center",marginBottom:12}}>🎁</div>
+      <div style={{fontSize:32,textAlign:"center",marginBottom:8}}>🎁</div>
       <div style={{fontFamily:"monospace",fontSize:11,color:C.dim,textAlign:"center",marginBottom:14,wordBreak:"break-all"}}>{found.qr_code}</div>
       <div style={{display:"grid",gap:8,marginBottom:16}}>
         {[
