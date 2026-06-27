@@ -1194,6 +1194,99 @@ function Segmentazione(){
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// PREMI CATALOGO — gestione premi riscattabili con punti (solo admin)
+// ══════════════════════════════════════════════════════════════════════════
+function PremiCatalogo(){
+  const{data:premi,loading,err,load,insert,update,remove}=useTable("premi_catalogo","ordine");
+  const[showAdd,setShowAdd]=useState(false);
+  const[editItem,setEditItem]=useState(null);
+  const[form,setForm]=useState({nome:"",icona:"🎁",punti_costo:"",categoria:"Prodotto",descrizione:"",ordine:"0"});
+  const[saving,setSaving]=useState(false);
+  const[formErr,setFormErr]=useState("");
+
+  const CATEGORIE=["Prodotto","Sconto","Gift Card","Esperienza"];
+
+  const openAdd=()=>{setForm({nome:"",icona:"🎁",punti_costo:"",categoria:"Prodotto",descrizione:"",ordine:String(premi.length+1)});setEditItem(null);setShowAdd(true);};
+  const openEdit=(p)=>{setForm({nome:p.nome,icona:p.icona,punti_costo:String(p.punti_costo),categoria:p.categoria,descrizione:p.descrizione||"",ordine:String(p.ordine)});setEditItem(p);setShowAdd(true);};
+
+  const salva=async()=>{
+    if(!form.nome.trim()||!form.punti_costo){setFormErr("Nome e punti obbligatori.");return;}
+    setSaving(true);setFormErr("");
+    const payload={nome:form.nome.trim(),icona:form.icona||"🎁",punti_costo:parseInt(form.punti_costo),categoria:form.categoria,descrizione:form.descrizione.trim(),ordine:parseInt(form.ordine)||0};
+    try{
+      if(editItem){await update(editItem.id,payload);}
+      else{await insert({...payload,id:"p"+Date.now(),attivo:true});}
+      setShowAdd(false);setEditItem(null);
+    }catch(e){setFormErr(e.message);}
+    setSaving(false);
+  };
+
+  const toggleAttivo=async(p)=>{
+    await update(p.id,{attivo:!p.attivo});
+  };
+
+  const elimina=async(p)=>{
+    if(!confirm(`Eliminare "${p.nome}"?`))return;
+    await remove(p.id);
+  };
+
+  if(loading)return <Loading/>;
+  return <div className="fade">
+    <SH title="Premi Catalogo" sub={`${premi.filter(p=>p.attivo).length} attivi`} action="+ Nuovo premio" onAction={openAdd}/>
+    <ErrBox msg={err}/>
+    <div style={{display:"grid",gap:10}}>
+      {premi.map(p=><div key={p.id} style={{background:C.card,borderRadius:14,padding:16,border:`1px solid ${p.attivo?C.border:C.dim+"44"}`,opacity:p.attivo?1:0.6}}>
+        <div style={{display:"flex",gap:12,alignItems:"center"}}>
+          <div style={{width:48,height:48,background:C.primary,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>{p.icona}</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:4}}>
+              <span style={{color:C.text,fontWeight:700,fontSize:15}}>{p.nome}</span>
+              <Badge text={p.categoria} color={C.teal} sm/>
+              {!p.attivo&&<Badge text="Nascosto" color={C.muted} sm/>}
+            </div>
+            {p.descrizione&&<div style={{color:C.muted,fontSize:12,marginBottom:4}}>{p.descrizione}</div>}
+            <div style={{color:C.gold,fontWeight:800,fontSize:14}}>{fmt(p.punti_costo)} pt</div>
+          </div>
+          <div style={{display:"flex",gap:6,flexShrink:0}}>
+            {/* Toggle visibilità */}
+            <div onClick={()=>toggleAttivo(p)} style={{width:38,height:22,background:p.attivo?C.green:C.dim,borderRadius:11,cursor:"pointer",position:"relative",flexShrink:0,transition:"background .2s"}}>
+              <div style={{position:"absolute",top:3,left:p.attivo?18:3,width:16,height:16,background:"#fff",borderRadius:8,transition:"left .2s"}}/>
+            </div>
+            <Btn sm color={C.gold} outline onClick={()=>openEdit(p)}>✏️</Btn>
+            <Btn sm color={C.accent} outline onClick={()=>elimina(p)}>🗑️</Btn>
+          </div>
+        </div>
+      </div>)}
+      {premi.length===0&&<div style={{background:C.card,borderRadius:12,padding:28,textAlign:"center",color:C.muted}}>Nessun premio nel catalogo. Creane uno!</div>}
+    </div>
+
+    {showAdd&&<Modal title={editItem?"✏️ Modifica premio":"🏅 Nuovo premio"} onClose={()=>{setShowAdd(false);setEditItem(null);}}>
+      <ErrBox msg={formErr}/>
+      <div style={{display:"grid",gridTemplateColumns:"60px 1fr",gap:"0 12px"}}>
+        <div>
+          <label style={{color:C.muted,fontSize:11,display:"block",marginBottom:5,textTransform:"uppercase"}}>Icona</label>
+          <input value={form.icona} onChange={e=>setForm({...form,icona:e.target.value})} style={{width:"100%",background:C.primary,color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px",fontSize:22,textAlign:"center",boxSizing:"border-box"}}/>
+        </div>
+        <Inp label="Nome premio" value={form.nome} onChange={v=>setForm({...form,nome:v})} req placeholder="Es. Caffè espresso"/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px"}}>
+        <div style={{marginBottom:13}}>
+          <label style={{color:C.muted,fontSize:11,display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:.5}}>Punti richiesti <span style={{color:C.accent}}>*</span></label>
+          <input type="number" value={form.punti_costo} onChange={e=>setForm({...form,punti_costo:e.target.value})} placeholder="es. 250" style={{width:"100%",background:C.primary,color:C.gold,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",fontSize:16,fontWeight:700,boxSizing:"border-box"}}/>
+        </div>
+        <Inp label="Categoria" value={form.categoria} onChange={v=>setForm({...form,categoria:v})} opts={CATEGORIE}/>
+      </div>
+      <Inp label="Descrizione (opzionale)" value={form.descrizione} onChange={v=>setForm({...form,descrizione:v})} placeholder="Breve descrizione del premio"/>
+      <Inp label="Ordine visualizzazione" value={form.ordine} onChange={v=>setForm({...form,ordine:v})} type="number"/>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+        <Btn outline color={C.muted} onClick={()=>{setShowAdd(false);setEditItem(null);}}>Annulla</Btn>
+        <Btn onClick={salva} disabled={saving}>{saving?<Spinner/>:(editItem?"Salva":"Crea")}</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ══════════════════════════════════════════════════════════════════════════
 const NAV=[
@@ -1205,6 +1298,7 @@ const NAV=[
   {id:"menu",label:"Menù",icon:"🍽️"},
   {id:"notifiche",label:"Notifiche",icon:"🔔"},
   {id:"segmenti",label:"Segmenti",icon:"🏷️"},
+  {id:"premi",label:"Premi Catalogo",icon:"🏅",adminOnly:true},
   {id:"addetti",label:"Addetti",icon:"👮",adminOnly:true},
 ];
 
@@ -1252,19 +1346,100 @@ function Addetti({addetto}){
 
   const loadLog=async(addettoId)=>{
     setLogLoading(true);setLog([]);
-    // Carica token emessi
-    const{data:tokens}=await sb.from("tokens").select("token,customer_name,campaign_name,created_at,status,prize_name").eq("addetto_id",addettoId).order("created_at",{ascending:false}).limit(50);
-    // Carica acquisti registrati
-    const{data:acquisti}=await sb.from("acquisti").select("id,importo,punti,created_at,status,customer_id,addetto_nome").eq("addetto_id",addettoId).order("created_at",{ascending:false}).limit(50);
-    // Carica clienti registrati
-    const{data:clienti}=await sb.from("clienti").select("name,email,join_date,addetto_registrazione").eq("addetto_registrazione",addetti.find(a=>a.id===addettoId)?.nome||"").limit(50);
+    const nomeAddetto=addetti.find(a=>a.id===addettoId)?.nome||"";
+    // Carica acquisti con customer_id per fare join
+    const{data:acquisti}=await sb.from("acquisti").select("id,importo,punti,created_at,created_time,status,customer_id,token_iw,annullato,annullato_at,annullato_da").eq("addetto_id",addettoId).order("created_at",{ascending:false}).limit(50);
+    // Carica token emessi dall'addetto
+    const{data:tokens}=await sb.from("tokens").select("token,customer_name,campaign_name,created_at,status,prize_name,customer_id").eq("addetto_id",addettoId).order("created_at",{ascending:false}).limit(50);
+    // Carica clienti registrati da questo addetto
+    const{data:clientiReg}=await sb.from("clienti").select("name,cognome,email,join_date,created_time").eq("addetto_registrazione",nomeAddetto).limit(50);
+    // Raccogli tutti i customer_id unici da acquisti e token
+    const ids=[
+      ...(acquisti||[]).map(a=>a.customer_id),
+      ...(tokens||[]).map(t=>t.customer_id),
+    ].filter(Boolean);
+    const uniqueIds=[...new Set(ids)];
+    let clientiMap={};
+    if(uniqueIds.length>0){
+      const{data:clientiDati}=await sb.from("clienti").select("id,name,cognome,email").in("id",uniqueIds);
+      (clientiDati||[]).forEach(c=>{clientiMap[c.id]=c;});
+    }
     // Merge e ordina per data
     const entries=[
-      ...(tokens||[]).map(t=>({tipo:"🎰 Token",desc:`${t.customer_name} — ${t.campaign_name}`,stato:t.status,data:t.created_at,extra:t.prize_name?`Premio: ${t.prize_name}`:""})),
-      ...(acquisti||[]).map(a=>({tipo:"💳 Acquisto",desc:`€${Number(a.importo).toFixed(2)} → +${a.punti} pt`,stato:a.status==="usato"?"Scansionato":"In attesa",data:a.created_at,extra:""})),
-      ...(clienti||[]).map(c=>({tipo:"👤 Registrazione",desc:`${c.name} (${c.email})`,stato:"Completata",data:c.join_date,extra:""})),
+      ...(acquisti||[]).map(a=>{
+        const cl=clientiMap[a.customer_id];
+        const nomeCliente=cl?(cl.name+(cl.cognome?" "+cl.cognome:"")):"Cliente non registrato";
+        const emailCliente=cl?.email||"—";
+        return {
+          tipo:"💳 Acquisto",
+          acqId:a.id,
+          importo:a.importo,
+          punti:a.punti,
+          customer_id:a.customer_id,
+          token_iw:a.token_iw,
+          nomeCliente,
+          emailCliente,
+          desc:`€${Number(a.importo).toFixed(2)} → +${a.punti} pt`,
+          stato:a.annullato?"Annullato":a.status==="usato"?"Scansionato":"In attesa",
+          annullato:a.annullato,
+          annullato_at:a.annullato_at,
+          annullato_da:a.annullato_da,
+          data:a.created_time||a.created_at,
+        };
+      }),
+      ...(tokens||[]).map(t=>{
+        const cl=clientiMap[t.customer_id];
+        const nomeCliente=cl?(cl.name+(cl.cognome?" "+cl.cognome:"")):(t.customer_name||"—");
+        const emailCliente=cl?.email||"—";
+        return {
+          tipo:"🎰 Token IW",
+          nomeCliente,
+          emailCliente,
+          desc:`Campagna: ${t.campaign_name}`,
+          stato:t.status,
+          extra:t.prize_name?`Premio: ${t.prize_name}`:"",
+          data:t.created_at,
+        };
+      }),
+      ...(clientiReg||[]).map(c=>({
+        tipo:"👤 Registrazione",
+        nomeCliente:c.name+(c.cognome?" "+c.cognome:""),
+        emailCliente:c.email||"—",
+        desc:"Nuovo cliente registrato",
+        stato:"Completata",
+        data:c.created_time||c.join_date,
+      })),
     ].sort((a,b)=>new Date(b.data)-new Date(a.data));
     setLog(entries);setLogLoading(false);
+  };
+
+  const annullaAcquisto=async(entry)=>{
+    if(!confirm(`Annullare l'acquisto di €${Number(entry.importo).toFixed(2)} per ${entry.nomeCliente}?\n\nVerranno rimossi i punti e invalidato il QR.`))return;
+    try{
+      // 1. Marca acquisto come annullato
+      await sb.from("acquisti").update({
+        annullato:true,
+        annullato_at:new Date().toISOString(),
+        annullato_da:addetto?.nome||"admin",
+        status:"annullato"
+      }).eq("id",entry.acqId);
+      // 2. Se c'è un token IW collegato, invalidalo
+      if(entry.token_iw){
+        await sb.from("tokens").update({status:"Annullato",won:false}).eq("id",entry.token_iw);
+      }
+      // 3. Se il cliente ha già usato il QR (punti accreditati), storna i punti
+      if(entry.customer_id&&entry.punti>0){
+        const{data:cl}=await sb.from("clienti").select("points").eq("id",entry.customer_id).single();
+        if(cl){
+          const newPts=Math.max(0,cl.points-entry.punti);
+          await sb.from("clienti").update({points:newPts,tier:calcTier(newPts)}).eq("id",entry.customer_id);
+        }
+      }
+      // Ricarica log
+      const addettoId=showLog;
+      await loadLog(addettoId);
+      alert("✅ Acquisto annullato.");
+    }catch(e){alert("Errore: "+e.message);}
   };
 
   if(!isAdmin)return <div style={{padding:24,textAlign:"center"}}>
@@ -1322,16 +1497,30 @@ function Addetti({addetto}){
       {!showLog&&<div style={{background:C.card,borderRadius:12,padding:24,textAlign:"center",color:C.muted,fontSize:14}}>Seleziona un addetto per vedere le sue operazioni</div>}
       {showLog&&logLoading&&<Loading/>}
       {showLog&&!logLoading&&log.length===0&&<div style={{background:C.card,borderRadius:12,padding:24,textAlign:"center",color:C.muted,fontSize:14}}>Nessuna operazione registrata</div>}
-      {showLog&&!logLoading&&log.map((entry,i)=><div key={i} style={{background:C.card,borderRadius:12,padding:14,marginBottom:8,display:"flex",gap:12,alignItems:"flex-start"}}>
-        <div style={{fontSize:20,flexShrink:0}}>{entry.tipo.split(" ")[0]}</div>
-        <div style={{flex:1}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
-            <div style={{color:C.text,fontSize:13,fontWeight:600}}>{entry.tipo.split(" ").slice(1).join(" ")}</div>
-            <div style={{color:C.dim,fontSize:11,flexShrink:0,marginLeft:8}}>{entry.data?.slice(0,10)||"—"}</div>
+      {showLog&&!logLoading&&log.map((entry,i)=><div key={i} style={{background:C.card,borderRadius:12,padding:14,marginBottom:8,border:`1px solid ${entry.annullato?C.accent+"33":C.border+"22"}`,opacity:entry.annullato?0.65:1}}>
+        <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+          <div style={{fontSize:20,flexShrink:0}}>{entry.tipo.split(" ")[0]}</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+              <div style={{color:C.text,fontSize:13,fontWeight:600}}>{entry.tipo.split(" ").slice(1).join(" ")}</div>
+              <div style={{color:C.dim,fontSize:11,flexShrink:0,marginLeft:8}}>{entry.data?.slice(0,16).replace("T"," ")||"—"}</div>
+            </div>
+            {/* Cliente */}
+            <div style={{background:C.primary,borderRadius:8,padding:"7px 10px",marginBottom:6}}>
+              <div style={{color:C.text,fontSize:12,fontWeight:600}}>{entry.nomeCliente}</div>
+              <div style={{color:C.muted,fontSize:11,marginTop:2}}>✉️ {entry.emailCliente}</div>
+            </div>
+            <div style={{color:C.muted,fontSize:12}}>{entry.desc}</div>
+            {entry.extra&&<div style={{color:C.gold,fontSize:11,marginTop:2}}>{entry.extra}</div>}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
+              <span style={{background:(entry.annullato?C.accent:entry.stato==="Scansionato"||entry.stato==="Completata"?C.green:C.teal)+"22",color:entry.annullato?C.accent:entry.stato==="Scansionato"||entry.stato==="Completata"?C.green:C.teal,border:`1px solid ${(entry.annullato?C.accent:entry.stato==="Scansionato"||entry.stato==="Completata"?C.green:C.teal)}44`,borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:600}}>
+                {entry.annullato?"🚫 Annullato":entry.stato}
+              </span>
+              {/* Pulsante annulla — solo acquisti non ancora annullati */}
+              {entry.tipo==="💳 Acquisto"&&!entry.annullato&&<button onClick={()=>annullaAcquisto(entry)} style={{background:"none",border:`1px solid ${C.accent}66`,color:C.accent,borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,flexShrink:0}}>🚫 Annulla</button>}
+            </div>
+            {entry.annullato&&<div style={{color:C.muted,fontSize:10,marginTop:4}}>Annullato il {entry.annullato_at?.slice(0,10)||"—"} da {entry.annullato_da||"—"}</div>}
           </div>
-          <div style={{color:C.muted,fontSize:12}}>{entry.desc}</div>
-          {entry.extra&&<div style={{color:C.gold,fontSize:11,marginTop:2}}>{entry.extra}</div>}
-          <div style={{marginTop:4}}><span style={{background:C.teal+"22",color:C.teal,border:`1px solid ${C.teal}44`,borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:600}}>{entry.stato}</span></div>
         </div>
       </div>)}
     </div>}
@@ -1356,10 +1545,123 @@ function Addetti({addetto}){
 
 
 // ══════════════════════════════════════════════════════════════════════════
+// RISCATTA PREMIO — tab nella Cassa per verificare/confermare riscatti
+// ══════════════════════════════════════════════════════════════════════════
+function RiscattiPanel({addetto}){
+  const[codice,setCodice]=useState("");
+  const[found,setFound]=useState(null);   // riscatto trovato
+  const[checking,setChecking]=useState(false);
+  const[confirming,setConfirming]=useState(false);
+  const[msg,setMsg]=useState(null);       // {type:"ok"|"err", text}
+  const[recenti,setRecenti]=useState([]);
+
+  useEffect(()=>{loadRecenti();},[]);
+
+  const loadRecenti=async()=>{
+    const{data}=await sb.from("riscatti").select("*").eq("status","riscattato").order("riscattato_at",{ascending:false}).limit(20);
+    setRecenti(data||[]);
+  };
+
+  const cerca=async()=>{
+    const c=codice.trim().toUpperCase();
+    if(!c)return;
+    setChecking(true);setFound(null);setMsg(null);
+    const{data,error}=await sb.from("riscatti").select("*").eq("qr_code",c).single();
+    setChecking(false);
+    if(error||!data){setMsg({type:"err",text:"❌ Codice non trovato o non valido."});return;}
+    if(data.status==="riscattato"){setMsg({type:"err",text:`❌ Premio già riscosso il ${data.riscattato_at?.slice(0,10)||"—"} da ${data.riscattato_da||"—"}.`});return;}
+    if(data.status==="scaduto"||new Date(data.scade_at)<new Date()){setMsg({type:"err",text:"❌ Questo codice è scaduto."});return;}
+    setFound(data);
+  };
+
+  const conferma=async()=>{
+    if(!found)return;
+    setConfirming(true);
+    try{
+      // 1. Scala punti al cliente
+      if(found.customer_id){
+        const{data:cl}=await sb.from("clienti").select("points").eq("id",found.customer_id).single();
+        if(cl){
+          const newPts=Math.max(0,cl.points-found.punti_costo);
+          await sb.from("clienti").update({points:newPts,tier:calcTier(newPts)}).eq("id",found.customer_id);
+        }
+      }
+      // 2. Marca riscatto come completato
+      await sb.from("riscatti").update({
+        status:"riscattato",
+        riscattato_at:new Date().toISOString(),
+        riscattato_da:addetto?.nome||"admin",
+      }).eq("id",found.id);
+      setMsg({type:"ok",text:`✅ Premio "${found.premio_nome}" riscattato! −${found.punti_costo} pt a ${found.customer_name||"cliente"}.`});
+      setFound(null);setCodice("");
+      loadRecenti();
+    }catch(e){setMsg({type:"err",text:"Errore: "+e.message});}
+    setConfirming(false);
+  };
+
+  return <div>
+    <div style={{background:C.card,borderRadius:14,padding:20,marginBottom:16}}>
+      <div style={{color:C.muted,fontSize:11,textTransform:"uppercase",letterSpacing:.5,marginBottom:10}}>Codice riscatto</div>
+      <input
+        value={codice} onChange={e=>{setCodice(e.target.value.toUpperCase());setMsg(null);setFound(null);}}
+        onKeyDown={e=>e.key==="Enter"&&cerca()}
+        placeholder="RIS-XXXXX-XXXXX"
+        style={{width:"100%",background:C.primary,color:C.gold,border:`2px solid ${codice?C.gold:C.border}`,borderRadius:12,padding:"14px 16px",fontSize:16,fontFamily:"monospace",textAlign:"center",letterSpacing:2,boxSizing:"border-box",marginBottom:12}}
+      />
+      <button onClick={cerca} disabled={!codice.trim()||checking} style={{width:"100%",background:`linear-gradient(135deg,${C.teal},${C.blue})`,border:"none",color:"#fff",borderRadius:10,padding:"13px",fontSize:15,fontWeight:800,cursor:"pointer",opacity:(!codice.trim()||checking)?.5:1}}>
+        {checking?<Spinner/>:"🔍 Verifica codice"}
+      </button>
+    </div>
+
+    {msg&&<div style={{background:(msg.type==="ok"?C.green:C.accent)+"22",border:`1px solid ${(msg.type==="ok"?C.green:C.accent)}44`,borderRadius:12,padding:"14px 16px",marginBottom:16,color:msg.type==="ok"?C.green:C.accent,fontSize:14,fontWeight:600}}>{msg.text}</div>}
+
+    {found&&<div style={{background:C.card,borderRadius:14,padding:20,marginBottom:16,border:`2px solid ${C.gold}44`}}>
+      <div style={{fontSize:32,textAlign:"center",marginBottom:12}}>🎁</div>
+      <div style={{fontFamily:"monospace",fontSize:11,color:C.dim,textAlign:"center",marginBottom:14,wordBreak:"break-all"}}>{found.qr_code}</div>
+      <div style={{display:"grid",gap:8,marginBottom:16}}>
+        {[
+          ["Cliente",found.customer_name||"—",C.teal],
+          ["Premio",found.premio_nome,C.gold],
+          ["Costo",`${found.punti_costo} punti`,C.orange],
+          ["Scade",found.scade_at?.slice(0,10)||"—",C.muted],
+        ].map(([k,v,c])=><div key={k} style={{display:"flex",justifyContent:"space-between",padding:"8px 10px",background:C.primary,borderRadius:8}}>
+          <span style={{color:C.muted,fontSize:12}}>{k}</span>
+          <span style={{color:c,fontWeight:700,fontSize:13}}>{v}</span>
+        </div>)}
+      </div>
+      <div style={{background:C.gold+"11",border:`1px solid ${C.gold}33`,borderRadius:10,padding:"10px 14px",fontSize:12,color:C.gold,marginBottom:14}}>
+        ⚠️ Confermando, verranno scalati <b>{found.punti_costo} punti</b> dal saldo del cliente.
+      </div>
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={()=>{setFound(null);setCodice("");}} style={{flex:1,background:"none",border:`1px solid ${C.muted}44`,color:C.muted,borderRadius:10,padding:"12px",cursor:"pointer",fontWeight:700}}>Annulla</button>
+        <button onClick={conferma} disabled={confirming} style={{flex:2,background:`linear-gradient(135deg,${C.green},${C.teal})`,border:"none",color:"#fff",borderRadius:10,padding:"12px",cursor:"pointer",fontWeight:800,fontSize:14,opacity:confirming?.7:1}}>
+          {confirming?<Spinner/>:"✅ Conferma riscatto"}
+        </button>
+      </div>
+    </div>}
+
+    {recenti.length>0&&<div>
+      <div style={{color:C.muted,fontSize:11,textTransform:"uppercase",letterSpacing:.5,marginBottom:10}}>Riscatti recenti</div>
+      {recenti.map(r=><div key={r.id} style={{background:C.card,borderRadius:10,padding:12,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div>
+          <div style={{color:C.text,fontSize:13,fontWeight:600}}>{r.premio_nome}</div>
+          <div style={{color:C.muted,fontSize:11,marginTop:2}}>{r.customer_name||"—"} · {r.riscattato_at?.slice(0,10)||"—"}</div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{color:C.accent,fontWeight:700,fontSize:13}}>−{r.punti_costo} pt</div>
+          <div style={{color:C.muted,fontSize:11}}>{r.riscattato_da||"—"}</div>
+        </div>
+      </div>)}
+    </div>}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // CASSA — registra acquisto veloce senza selezionare cliente
 // ══════════════════════════════════════════════════════════════════════════
 function Cassa({addetto}){
   const{data:camps}=useTable("campagne","id");
+  const[cassaTab,setCassaTab]=useState("acquisto");
   const[importo,setImporto]=useState("");
   const[result,setResult]=useState(null);
   const[saving,setSaving]=useState(false);
@@ -1438,12 +1740,15 @@ function Cassa({addetto}){
   const btCol={disconnected:C.muted,connecting:C.gold,connected:C.green,printing:C.blue,error:C.accent}[btStatus];
 
   return <div className="fade">
-    <div style={{marginBottom:20}}>
-      <h2 style={{margin:0,fontSize:20,color:C.text}}>🛒 Cassa</h2>
-      <p style={{color:C.muted,fontSize:13,marginTop:4}}>Genera QR acquisto istantaneo</p>
+    <div style={{marginBottom:16}}>
+      <h2 style={{margin:"0 0 4px",fontSize:20,color:C.text}}>🛒 Cassa</h2>
+      <p style={{color:C.muted,fontSize:13}}>Registra acquisti e riscatta premi</p>
     </div>
+    <Tabs tabs={["Acquisto","Riscatta Premio"]} active={cassaTab==="acquisto"?"Acquisto":"Riscatta Premio"} onChange={v=>setCassaTab(v==="Acquisto"?"acquisto":"riscatta")}/>
 
-    {!result?<div style={{maxWidth:420}}>
+    {cassaTab==="riscatta"&&<RiscattiPanel addetto={addetto}/>}
+
+    {cassaTab==="acquisto"&&(!result?<div style={{maxWidth:420}}>
       {/* Importo */}
       <div style={{background:C.card,borderRadius:16,padding:24,marginBottom:16}}>
         <label style={{color:C.muted,fontSize:11,display:"block",marginBottom:10,textTransform:"uppercase",letterSpacing:.5}}>Importo scontrino (€)</label>
@@ -1544,7 +1849,7 @@ function Cassa({addetto}){
       <button onClick={reset} style={{width:"100%",background:`linear-gradient(135deg,${C.accent},${C.gold})`,border:"none",color:"#fff",borderRadius:14,padding:"16px",fontSize:16,fontWeight:800,cursor:"pointer"}}>
         ⚡ Nuovo acquisto
       </button>
-    </div>}
+    </div>)}
   </div>;
 }
 
@@ -1618,6 +1923,7 @@ function App(){
       case "menu":      return <MenuDigitale/>;
       case "notifiche": return <Notifiche/>;
       case "segmenti":  return <Segmentazione/>;
+      case "premi":     return <PremiCatalogo/>;
       case "addetti":   return <Addetti addetto={addetto}/>;
       default:          return <Dashboard/>;
     }
