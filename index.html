@@ -700,6 +700,75 @@ function Clienti({addetto}){
   </div>;
 }
 
+// ── SCRATCH CARD CANVAS ───────────────────────────────────────────────────
+function ScratchCard({won,prizeName,onScratched}){
+  const canvasRef=useRef(null);
+  const drawing=useRef(false);
+  const pct=useRef(0);
+  const notified=useRef(false);
+  const W=280,H=170,BRUSH=38,REVEAL_AT=50; // % pixel trasparenti per rivelare
+
+  useEffect(()=>{
+    const canvas=canvasRef.current;if(!canvas)return;
+    const ctx=canvas.getContext("2d");
+    ctx.clearRect(0,0,W,H);
+    // Disegna layer grattabile completamente opaco
+    const grad=ctx.createLinearGradient(0,0,W,H);
+    grad.addColorStop(0,"#B8860B");
+    grad.addColorStop(0.4,"#FFD700");
+    grad.addColorStop(0.6,"#DAA520");
+    grad.addColorStop(1,"#B8860B");
+    ctx.fillStyle=grad;
+    ctx.beginPath();ctx.roundRect(0,0,W,H,16);ctx.fill();
+    // Pattern righe
+    ctx.strokeStyle="rgba(0,0,0,0.08)";ctx.lineWidth=1;
+    for(let i=0;i<W+H;i+=18){ctx.beginPath();ctx.moveTo(i,0);ctx.lineTo(0,i);ctx.stroke();}
+    // Testo "Gratta!"
+    ctx.fillStyle="rgba(0,0,0,0.5)";ctx.font="bold 15px Inter,system-ui,sans-serif";
+    ctx.textAlign="center";ctx.textBaseline="middle";
+    ctx.fillText("👆  Gratta per scoprire!",W/2,H/2);
+    pct.current=0;notified.current=false;
+  },[won,prizeName]);
+
+  const getXY=(e,canvas)=>{
+    const r=canvas.getBoundingClientRect();
+    const scaleX=canvas.width/r.width,scaleY=canvas.height/r.height;
+    if(e.touches){
+      return[(e.touches[0].clientX-r.left)*scaleX,(e.touches[0].clientY-r.top)*scaleY];
+    }
+    return[(e.clientX-r.left)*scaleX,(e.clientY-r.top)*scaleY];
+  };
+
+  const scratch=(e)=>{
+    if(!drawing.current)return;
+    e.preventDefault();
+    const canvas=canvasRef.current;if(!canvas)return;
+    const ctx=canvas.getContext("2d");
+    const[x,y]=getXY(e,canvas);
+    ctx.globalCompositeOperation="destination-out";
+    ctx.beginPath();
+    ctx.arc(x,y,BRUSH,0,Math.PI*2);
+    ctx.fill();
+    ctx.globalCompositeOperation="source-over";
+    // Calcola % grattato
+    if(notified.current)return;
+    const img=ctx.getImageData(0,0,W,H);
+    let transparent=0;
+    for(let i=3;i<img.data.length;i+=4){if(img.data[i]<128)transparent++;}
+    pct.current=Math.round(transparent/(W*H)*100);
+    if(pct.current>=REVEAL_AT&&!notified.current){notified.current=true;onScratched();}
+  };
+
+  const start=(e)=>{drawing.current=true;scratch(e);};
+  const stop=()=>{drawing.current=false;};
+
+  return <canvas ref={canvasRef} width={W} height={H}
+    style={{borderRadius:16,cursor:"crosshair",display:"block",touchAction:"none",width:"100%",maxWidth:W,boxShadow:`0 0 0 2px ${C.gold}66`}}
+    onMouseDown={start} onMouseMove={scratch} onMouseUp={stop} onMouseLeave={stop}
+    onTouchStart={start} onTouchMove={scratch} onTouchEnd={stop}
+  />;
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // INSTANT WIN
 // ══════════════════════════════════════════════════════════════════════════
@@ -710,7 +779,7 @@ function InstantWin({addetto}){
   const[showNew,setShowNew]=useState(false);
   const[playToken,setPlayToken]=useState("");
   const[playResult,setPlayResult]=useState(null);
-  const[scratchPct,setScratchPct]=useState(0);
+  // scratchPct removed — ora gestito dal canvas ScratchCard
   const[scratched,setScratched]=useState(false);
   const[cf,setCf]=useState({name:"",start_date:"",end_date:"",trigger_type:"importo",trigger_value:20,prizes:[{id:"p1",name:"Caffè gratis",probability:10,total:100,value:"~€1,50"},{id:"p2",name:"Sconto 10%",probability:8,total:80,value:"variabile"}]});
   const[saving,setSaving]=useState(false);
@@ -749,13 +818,10 @@ function InstantWin({addetto}){
     if(outcome.won)updPrizes=prizes.map(p=>p.id===outcome.prizeId?{...p,remaining:Math.max(0,p.remaining-1)}:p);
     await sb.from("campagne").update({prizes:JSON.stringify(updPrizes),stats:JSON.stringify({...stats,played:stats.played+1,won:stats.won+(outcome.won?1:0)})}).eq("id",camp.id);
     setPlayResult({...outcome,customerName:found.customer_name});
-    setScratchPct(0);setScratched(false);load();
+    setScratched(false);load();
   };
 
-  const doScratch=()=>{
-    if(scratched)return;let p=scratchPct;
-    const iv=setInterval(()=>{p=Math.min(100,p+10);setScratchPct(p);if(p>=100){clearInterval(iv);setScratched(true);}},25);
-  };
+  const doScratch=()=>{}; // handled by ScratchCard canvas
 
   if(loading)return <Loading/>;
   return <div className="fade">
@@ -799,22 +865,28 @@ function InstantWin({addetto}){
     {tab==="Simula"&&<div style={{maxWidth:420,margin:"0 auto",textAlign:"center"}}>
       <div style={{background:C.card,borderRadius:14,padding:20,marginBottom:14}}>
         <div style={{color:C.muted,fontSize:12,textTransform:"uppercase",marginBottom:8}}>Token</div>
-        <input value={playToken} onChange={e=>{setPlayToken(e.target.value.toUpperCase());setPlayResult(null);setScratchPct(0);setScratched(false);}} placeholder="TK-XXXXXXXXXXXXXXXX" style={{width:"100%",background:C.primary,color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"11px 14px",fontSize:14,fontFamily:"monospace",textAlign:"center",letterSpacing:1,boxSizing:"border-box"}}/>
+        <input value={playToken} onChange={e=>{setPlayToken(e.target.value.toUpperCase());setPlayResult(null);setScratched(false);}} placeholder="TK-XXXXXXXXXXXXXXXX" style={{width:"100%",background:C.primary,color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"11px 14px",fontSize:14,fontFamily:"monospace",textAlign:"center",letterSpacing:1,boxSizing:"border-box"}}/>
         {playResult?.error&&<div style={{color:C.accent,fontSize:12,marginTop:8}}>{playResult.error}</div>}
         {!playResult&&<Btn full onClick={playOp} color={C.gold} disabled={!playToken.trim()}><span style={{display:"block",marginTop:10}}>🎰 Gioca</span></Btn>}
         {!playResult&&tokens.some(t=>t.status==="Non giocato")&&<button onClick={()=>setPlayToken(tokens.find(t=>t.status==="Non giocato")?.token||"")} style={{marginTop:8,background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:12}}>Usa token demo</button>}
       </div>
       {playResult&&!playResult.error&&<div>
         <div style={{color:C.muted,fontSize:13,marginBottom:14}}>Cliente: <b style={{color:C.text}}>{playResult.customerName}</b></div>
-        <div style={{position:"relative",width:240,height:150,margin:"0 auto 18px",cursor:"pointer"}} onClick={doScratch}>
-          <div style={{position:"absolute",inset:0,borderRadius:18,background:playResult.won?"linear-gradient(135deg,#0d2010,#0a1f0d)":"linear-gradient(135deg,#1f0d0d,#2e0d0d)",border:`2px solid ${playResult.won?C.green:C.accent}44`,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:8}}>
-            {playResult.won?<><div style={{fontSize:36}}>🏆</div><div style={{color:C.green,fontWeight:900,fontSize:18}}>VINTO!</div><div style={{color:C.text,fontSize:13}}>{playResult.prizeName}</div></>:<><div style={{fontSize:36}}>😔</div><div style={{color:C.accent,fontWeight:700,fontSize:16}}>Non vinto</div></>}
+        {/* Esito sotto — completamente nascosto dal canvas fino a quando non si gratta */}
+        <div style={{position:"relative",width:"100%",maxWidth:280,margin:"0 auto 18px"}}>
+          <div style={{borderRadius:16,background:playResult.won?"linear-gradient(135deg,#0d2010,#0a1f0d)":"linear-gradient(135deg,#1f0d0d,#2e0d0d)",border:`2px solid ${playResult.won?C.green:C.accent}44`,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:8,height:170,padding:12}}>
+            {playResult.won
+              ?<><div style={{fontSize:44}}>🏆</div><div style={{color:C.green,fontWeight:900,fontSize:20}}>VINTO!</div><div style={{color:C.text,fontSize:14,textAlign:"center"}}>{playResult.prizeName}</div></>
+              :<><div style={{fontSize:44}}>😔</div><div style={{color:C.accent,fontWeight:700,fontSize:18}}>Non vinto</div><div style={{color:C.muted,fontSize:12}}>Ritenta al prossimo acquisto!</div></>}
           </div>
-          {!scratched&&<div style={{position:"absolute",inset:0,borderRadius:18,background:`repeating-linear-gradient(45deg,${C.gold}CC,${C.gold}CC 12px,${C.gold}99 12px,${C.gold}99 24px)`,clipPath:`inset(0 ${scratchPct}% 0 0 round 18px)`,border:`2px solid ${C.gold}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
-            {scratchPct===0&&<div style={{color:"#000",fontWeight:800,fontSize:13}}>👆 Gratta!</div>}
+          {!scratched&&<div style={{position:"absolute",inset:0}}>
+            <ScratchCard won={playResult.won} prizeName={playResult.prizeName} onScratched={()=>setScratched(true)}/>
           </div>}
         </div>
-        {scratched&&<button onClick={()=>{setPlayToken("");setPlayResult(null);setScratchPct(0);setScratched(false);}} style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 16px",cursor:"pointer",fontSize:13}}>Nuovo test</button>}
+        {scratched&&<div style={{marginTop:8}}>
+          {playResult.won&&<div style={{background:C.green+"22",border:`1px solid ${C.green}44`,borderRadius:10,padding:"10px 14px",color:C.green,fontSize:13,marginBottom:10}}>🏆 Il cliente deve mostrare questa schermata alla cassa per ritirare il premio.</div>}
+          <button onClick={()=>{setPlayToken("");setPlayResult(null);setScratched(false);}} style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"7px 16px",cursor:"pointer",fontSize:13}}>Nuovo test</button>
+        </div>}
       </div>}
     </div>}
 
